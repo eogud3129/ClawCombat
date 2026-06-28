@@ -1,3 +1,6 @@
+> ℹ️ **Notice:** This project is a [fork / modified version / extended version] of the original [OpenCombat](https://github.com/buxx/opencombat) repository developed by [buxx](https://github.com/buxx). All credits for the foundational codebase and core concepts go to the original author.
+
+
 # OpenCombat
 
 ![Testing workflow](https://github.com/buxx/OpenCombat/actions/workflows/test.yml/badge.svg)
