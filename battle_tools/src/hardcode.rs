@@ -44,6 +44,7 @@ pub fn demo1_deployment() -> Deployment {
                 ],
                 Order::Idle,
                 Behavior::Idle(Body::StandUp),
+                3,
             );
             soldiers.push(soldier);
             soldiers_index += 1;
@@ -72,6 +73,7 @@ pub fn demo1_deployment() -> Deployment {
                 ],
                 Order::Idle,
                 Behavior::Idle(Body::StandUp),
+                3,
             );
             soldiers.push(soldier);
             soldiers_index += 1;
@@ -97,6 +99,7 @@ pub fn demo1_deployment() -> Deployment {
         vec![],
         Order::Idle,
         Behavior::Idle(Body::StandUp),
+        3,
     );
     soldiers.push(tank_driver);
     soldiers_index += 1;
@@ -114,6 +117,7 @@ pub fn demo1_deployment() -> Deployment {
         vec![],
         Order::Idle,
         Behavior::Idle(Body::StandUp),
+        3,
     );
     soldiers.push(tank_gunner);
     boards.insert(

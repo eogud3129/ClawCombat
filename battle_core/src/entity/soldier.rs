@@ -30,6 +30,11 @@ pub struct Soldier {
     magazines: Vec<Magazine>,
     last_shoot_frame_i: u64,
     last_shot_frame_i: u64,
+    support_promise_end_frame_i: u64,
+    grenades: u8,
+    last_grenade_frame_i: u64,
+    #[serde(default)]
+    last_hide_frame_i: u64,
 }
 
 impl Soldier {
@@ -41,6 +46,7 @@ impl Soldier {
         side: Side,
         main_weapon: Option<Weapon>,
         magazines: Vec<Magazine>,
+        grenades: u8,
     ) -> Self {
         Self {
             uuid,
@@ -59,11 +65,15 @@ impl Soldier {
             magazines,
             last_shot_frame_i: 0,
             last_shoot_frame_i: 0,
+            support_promise_end_frame_i: 0,
+            grenades,
+            last_grenade_frame_i: 0,
+            last_hide_frame_i: 0,
         }
     }
 
     pub fn from_soldier(soldier: &Soldier) -> Self {
-        Self::new(
+        let mut new_soldier = Self::new(
             soldier.uuid(),
             *soldier.type_(),
             soldier.world_point(),
@@ -71,7 +81,11 @@ impl Soldier {
             *soldier.side(),
             soldier.main_weapon().clone(),
             soldier.magazines().clone(),
-        )
+            soldier.grenades(),
+        );
+        new_soldier.last_grenade_frame_i = soldier.last_grenade_frame_i();
+        new_soldier.last_hide_frame_i = soldier.last_hide_frame_i();
+        new_soldier
     }
 
     pub fn uuid(&self) -> SoldierIndex {
@@ -92,6 +106,10 @@ impl Soldier {
 
     pub fn squad_uuid(&self) -> SquadUuid {
         self.squad_uuid
+    }
+
+    pub fn set_squad_uuid(&mut self, squad_uuid: SquadUuid) {
+        self.squad_uuid = squad_uuid;
     }
 
     pub fn behavior(&self) -> &Behavior {
@@ -159,39 +177,41 @@ impl Soldier {
     }
 
     pub fn can_be_animated(&self) -> bool {
-        self.alive && !self.unconscious
+        self.alive && !self.unconscious && !matches!(self.behavior, Behavior::OffMapTransit(_))
     }
 
     pub fn can_be_leader(&self) -> bool {
-        self.alive && !self.unconscious
+        self.alive && !self.unconscious && !matches!(self.behavior, Behavior::OffMapTransit(_))
     }
 
     pub fn can_be_count_for_morale(&self) -> bool {
+        // [버그 수정: 후퇴 중 사기 급락으로 인한 게임 종료 방지]
+        // 일시적으로 맵 밖으로 이탈(OffMapTransit)한 병사라도 살아있으므로 사기 계산에 포함시켜야 게임이 돌연 종료되지 않습니다.
         self.alive && !self.unconscious
     }
 
     pub fn can_produce_sound(&self) -> bool {
-        self.alive && !self.unconscious
+        self.alive && !self.unconscious && !matches!(self.behavior, Behavior::OffMapTransit(_))
     }
 
     pub fn can_feel_explosion(&self) -> bool {
-        self.alive
+        self.alive && !matches!(self.behavior, Behavior::OffMapTransit(_))
     }
 
     pub fn can_feel_bullet_fire(&self) -> bool {
-        self.alive
+        self.alive && !matches!(self.behavior, Behavior::OffMapTransit(_))
     }
 
     pub fn can_see_interior(&self) -> bool {
-        self.alive && !self.unconscious
+        self.alive && !self.unconscious && !matches!(self.behavior, Behavior::OffMapTransit(_))
     }
 
     pub fn can_seek(&self) -> bool {
-        self.alive && !self.unconscious
+        self.alive && !self.unconscious && !matches!(self.behavior, Behavior::OffMapTransit(_))
     }
 
     pub fn can_be_designed_as_target(&self) -> bool {
-        self.alive && !self.unconscious
+        self.alive && !self.unconscious && !matches!(self.behavior, Behavior::OffMapTransit(_))
     }
 
     pub fn can_take_flag(&self) -> bool {
@@ -228,6 +248,55 @@ impl Soldier {
 
     pub fn last_shot_frame_i(&self) -> &u64 {
         &self.last_shot_frame_i
+    }
+
+    pub fn set_support_promise_end_frame_i(&mut self, value: u64) {
+        self.support_promise_end_frame_i = value
+    }
+
+    pub fn support_promise_end_frame_i(&self) -> &u64 {
+        &self.support_promise_end_frame_i
+    }
+
+    pub fn grenades(&self) -> u8 {
+        self.grenades
+    }
+
+    pub fn set_grenades(&mut self, val: u8) {
+        self.grenades = val;
+    }
+
+    pub fn last_grenade_frame_i(&self) -> u64 {
+        self.last_grenade_frame_i
+    }
+
+    pub fn set_last_grenade_frame_i(&mut self, val: u64) {
+        self.last_grenade_frame_i = val;
+    }
+
+    pub fn last_hide_frame_i(&self) -> u64 {
+        self.last_hide_frame_i
+    }
+
+    pub fn set_last_hide_frame_i(&mut self, val: u64) {
+        self.last_hide_frame_i = val;
+    }
+
+    pub fn replenish_ammunition(&mut self) {
+        if let Some(weapon) = &self.main_weapon {
+            let mut new_mags = vec![];
+            let default_mag = match weapon {
+                Weapon::MosinNagantM1924(_, _) => Magazine::MosinNagant(5),
+                Weapon::MauserG41(_, _) => Magazine::Mauser(5),
+                Weapon::BrenMark2(_) => Magazine::BrenCurved30(30),
+                Weapon::Mg34(_) => Magazine::Patronengurtx792x57s250(250),
+            };
+            for _ in 0..weapon.ok_count_magazines() {
+                new_mags.push(default_mag.clone());
+            }
+            self.magazines = new_mags;
+            self.grenades = 3;
+        }
     }
 
     pub fn weapon(&self, class: &WeaponClass) -> &Option<Weapon> {
@@ -296,7 +365,7 @@ impl Soldier {
             Behavior::MoveFastTo(_) => SoldierAnimationType::Walking,
             Behavior::SneakTo(_) => SoldierAnimationType::Crawling,
             Behavior::Defend(_) => SoldierAnimationType::LyingDown,
-            Behavior::Hide(_) => SoldierAnimationType::LyingDown,
+            Behavior::Hide(_) | Behavior::ScatterToCover(_) | Behavior::GatherToCover(_) => SoldierAnimationType::LyingDown,
             Behavior::DriveTo(_) => SoldierAnimationType::Idle,
             Behavior::RotateTo(_) => SoldierAnimationType::Idle,
             // TODO : Different animation according to death type
@@ -304,6 +373,7 @@ impl Soldier {
             Behavior::Unconscious => SoldierAnimationType::LyingDown,
             Behavior::SuppressFire(_) => SoldierAnimationType::LyingDown,
             Behavior::EngageSoldier(_) => SoldierAnimationType::LyingDown,
+            Behavior::OffMapTransit(_) => SoldierAnimationType::Idle,
         };
 
         let weapon_animation_type = WeaponAnimationType::from(&animation_type);
@@ -319,11 +389,12 @@ impl Soldier {
             Behavior::RotateTo(_) => Body::Crouched,
             Behavior::Idle(body) => body,
             Behavior::Defend(_) => Body::Lying,
-            Behavior::Hide(_) => Body::Lying,
+            Behavior::Hide(_) | Behavior::ScatterToCover(_) | Behavior::GatherToCover(_) => Body::Lying,
             Behavior::Dead => Body::Lying,
             Behavior::Unconscious => Body::Lying,
             Behavior::SuppressFire(_) => Body::Lying,
             Behavior::EngageSoldier(_) => Body::Lying,
+            Behavior::OffMapTransit(_) => Body::StandUp,
         }
     }
 }
@@ -338,6 +409,7 @@ impl From<&SoldierDeployment> for Soldier {
             deployment.side(),
             deployment.main_weapon().cloned(),
             deployment.magazines().to_vec(),
+            deployment.grenades(),
         );
         soldier.order = deployment.order().clone();
         soldier.behavior = deployment.behavior().clone();

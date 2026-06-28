@@ -15,10 +15,8 @@ impl Engine {
     pub fn end_gui(&mut self, ctx: &mut Context) -> Vec<EngineMessage> {
         if let Phase::End(victorious, end_reason) = self.battle_state.phase() {
             let drawable_size = ctx.gfx.drawable_size();
-            self.egui_backend
-                .input
-                .set_scale_factor(EGUI_SCALE, drawable_size);
-            let egui_ctx = self.egui_backend.ctx();
+            self.egui_backend.set_scale_factor(EGUI_SCALE, drawable_size);
+            let egui_ctx = self.egui_backend.inner.ctx();
             let mut messages = vec![];
 
             let winner = victorious.to_string();
@@ -40,7 +38,6 @@ impl Engine {
                     })
                 });
 
-            self.egui_backend.update(ctx);
             return messages;
         }
 

@@ -123,7 +123,28 @@ impl Visibility {
         let to_point = to_soldier.world_point();
         let last_shoot_frame_i = to_soldier.last_shoot_frame_i();
 
-        let by_behavior_modifier: f32 = config.visibility_behavior_modifier(to_soldier.behavior());
+        let mut by_behavior_modifier: f32 = config.visibility_behavior_modifier(to_soldier.behavior());
+
+        // [평야지대 은엄폐 딜레이(지연) 시스템]
+        // 평야지대(투명도 0.1 미만)에서 은엄폐(Hide/Defend)를 시도할 경우 즉시 투명화되지 않고 3초(180프레임)에 걸쳐 서서히 은폐율이 오르도록 지연시킵니다.
+        let is_hiding = matches!(to_soldier.behavior(), crate::behavior::Behavior::Hide(_) | crate::behavior::Behavior::Defend(_) | crate::behavior::Behavior::ScatterToCover(_) | crate::behavior::Behavior::GatherToCover(_));
+        if is_hiding {
+            let to_grid = map.grid_point_from_world_point(&to_point);
+            let tile_idx = (to_grid.y * map.width() as i32 + to_grid.x) as usize;
+            if let Some(tile) = map.terrain_tiles().get(tile_idx) {
+                if config.terrain_tile_opacity(&tile.type_) < 0.1 {
+                    let hide_duration = frame_i.saturating_sub(to_soldier.last_hide_frame_i());
+                    let required_delay = 180; // 3초 (TARGET_FPS * 3)
+                    if hide_duration < required_delay {
+                        // 0% ~ 100% 진행률 계산
+                        let progress = hide_duration as f32 / required_delay as f32;
+                        // 원래 모디파이어(예: -0.9)에 진행률을 곱해 서서히 목표치에 도달하도록 부드럽게 보정합니다. (초기에는 0.0에 가깝게)
+                        by_behavior_modifier *= progress;
+                    }
+                }
+            }
+        }
+
         let exclude_lasts = if last_shoot_frame_i + config.visibility_by_last_frame_shoot >= frame_i
         {
             config.visibility_by_last_frame_shoot_distance
@@ -292,11 +313,32 @@ impl Visibility {
                         continue;
                     }
                 };
-                let grid_point_opacity = if grid_path.len() <= exclude_firsts {
+                let mut grid_point_opacity = if grid_path.len() <= exclude_firsts {
                     0.0
                 } else {
                     config.terrain_tile_opacity(&terrain_tile.type_)
                 };
+
+                // [비대칭 가시성(Asymmetric Visibility) 개편]
+                // 관측자(Shooter)가 있는 시작점(exclude_firsts 이내)의 수풀/나무 불투명도는 위에서 0.0으로 완전히 상쇄되었습니다. (안에서 밖은 잘 보임)
+                // 반면, 관측자의 시야를 벗어난 외부(즉, 광선이 향하는 타겟 쪽)에 수풀이나 나무가 존재한다면, 
+                // 불투명도 가중치를 기존 1.5배에서 4.0배로 극단적으로 증폭시킵니다. (밖에서 안은 들여다보기 매우 힘듦)
+                // 벌목된 나무(MiddleWoodLogs)는 가시거리를 전혀 방해하지 않도록 불투명도를 0.0으로 완전 무력화합니다.
+                if grid_path.len() > exclude_firsts {
+                    match terrain_tile.type_ {
+                        crate::map::terrain::TileType::Trunk | 
+                        crate::map::terrain::TileType::Underbrush | 
+                        crate::map::terrain::TileType::LightUnderbrush | 
+                        crate::map::terrain::TileType::Hedge => {
+                            grid_point_opacity *= 4.0;
+                        }
+                        crate::map::terrain::TileType::MiddleWoodLogs => {
+                            grid_point_opacity = 0.0;
+                        }
+                        _ => {}
+                    }
+                }
+
                 if i >= exclude_firsts && terrain_tile.type_().block_bullet() {
                     // FIXME BS NOW: defend and move etc. must change their order only if visible and not !blocked !
                     blocked = true

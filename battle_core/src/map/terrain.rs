@@ -49,21 +49,26 @@ impl FromStr for TileType {
 impl TileType {
     pub fn pedestrian_cost(&self) -> i32 {
         match self {
-            TileType::ShortGrass => 10,
-            TileType::MiddleGrass => 10,
-            TileType::HighGrass => 10,
-            TileType::Dirt => 11,
-            TileType::Mud => 11,
-            TileType::Concrete => 50,
-            TileType::BrickWall => 50,
-            TileType::Trunk => 50,
-            TileType::Water => 18,
-            TileType::DeepWater => 50,
-            TileType::Underbrush => 12,
-            TileType::LightUnderbrush => 11,
-            TileType::MiddleWoodLogs => 30,
-            TileType::Hedge => 20,
-            TileType::MiddleRock => 25,
+            // [비용 현실화] 개활지와 맨땅의 비용을 정상화하여 무리한 외곽 우회 기동을 방지합니다.
+            TileType::ShortGrass => 20,
+            TileType::MiddleGrass => 18,
+            TileType::HighGrass => 15,
+            TileType::Dirt => 20,
+            TileType::Mud => 30,
+            TileType::Concrete => 20,
+            TileType::Water => 50,
+            TileType::DeepWater => 200,
+
+            // 엄폐물 선호 기조는 유지하되 갭을 줄입니다.
+            TileType::Underbrush => 10,
+            TileType::LightUnderbrush => 12,
+            TileType::Hedge => 15,
+            TileType::MiddleWoodLogs => 15,
+            TileType::MiddleRock => 15,
+
+            // 벽, 나무기둥 자체는 관통 불가 (강력한 페널티 유지)
+            TileType::BrickWall => 500,
+            TileType::Trunk => 500,
         }
     }
 

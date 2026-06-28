@@ -7,6 +7,7 @@ use ggez::{
 };
 
 use battle_core::{
+    behavior::Behavior,
     entity::soldier::{Soldier, WeaponClass},
     game::squad::{squad_positions, Formation},
     order::{marker::OrderMarker, Order, PendingOrder},
@@ -84,6 +85,11 @@ impl Engine {
 
         // Don't draw soldier which inside vehicle
         if self.battle_state.soldier_board(soldier_index).is_some() {
+            return false;
+        }
+
+        // [Operation Ghost - Part 4] 맵 이탈(Off-map) 상태인 보병은 렌더링에서 전면 제외(투명화)됩니다.
+        if matches!(soldier.behavior(), Behavior::OffMapTransit(_)) {
             return false;
         }
 
@@ -310,6 +316,26 @@ impl Engine {
             )
         }
 
+        Ok(())
+    }
+
+    pub fn draw_ammo_crates(&mut self, canvas: &mut Canvas, _: DrawParam) -> GameResult {
+        let map = self.battle_state.map();
+        for zone in map.spawn_zones() {
+            let center_x = zone.x() + zone.width() / 2.0;
+            let center_y = zone.y() + zone.height() / 2.0;
+            
+            let dest_x = center_x * self.gui_state.zoom.factor() + self.gui_state.display_scene_offset.x;
+            let dest_y = center_y * self.gui_state.zoom.factor() + self.gui_state.display_scene_offset.y;
+            
+            let mut text = Text::new(TextFragment::new("📦 AMMO").color(Color::new(1.0, 0.8, 0.0, 1.0)));
+            text.set_scale(20.0 * self.gui_state.zoom.factor());
+            
+            canvas.draw(
+                &text,
+                DrawParam::default().dest(glam::Vec2::new(dest_x, dest_y))
+            );
+        }
         Ok(())
     }
 

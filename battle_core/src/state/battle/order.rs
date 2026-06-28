@@ -77,6 +77,7 @@ impl BattleState {
                         OrderMarkerIndex(0),
                     ));
                 }
+                Order::OffMapTransit(_) => {}
             }
         }
 

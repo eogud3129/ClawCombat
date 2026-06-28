@@ -108,6 +108,9 @@ pub const PATH_FINDING_HEURISTIC_COEFFICIENT: f32 = 10.;
 
 #[derive(Debug, Clone)]
 pub struct ServerConfig {
+    pub game_speed: f32,
+    pub yolo_mode_a: bool,
+    pub yolo_mode_b: bool,
     pub send_debug_points: bool,
     pub target_cycle_duration_us: u64,
     pub flags_update_freq: u64,
@@ -176,6 +179,9 @@ impl Default for ServerConfig {
         }
 
         Self {
+            game_speed: 1.0,
+            yolo_mode_a: false,
+            yolo_mode_b: false,
             send_debug_points: false,
             target_cycle_duration_us: TARGET_CYCLE_DURATION_US,
             // Frequency of flags update
@@ -296,7 +302,7 @@ impl ServerConfig {
             Behavior::Idle(Body::StandUp) => self.visibility_idle_standup_modifier,
             Behavior::Idle(Body::Crouched) => self.visibility_idle_standup_modifier,
             Behavior::Idle(Body::Lying) => self.visibility_idle_standup_modifier,
-            Behavior::Hide(_) => self.visibility_hide_modifier,
+            Behavior::Hide(_) | Behavior::ScatterToCover(_) | Behavior::GatherToCover(_) => self.visibility_hide_modifier,
             Behavior::Defend(_) => self.visibility_defend_modifier,
             Behavior::MoveTo(_) => self.visibility_move_to_modifier,
             Behavior::MoveFastTo(_) => self.visibility_move_fast_to_modifier,
@@ -307,6 +313,7 @@ impl ServerConfig {
             Behavior::EngageSoldier(_) => self.visibility_engage_modifier,
             Behavior::Dead => self.visibility_dead_modifier,
             Behavior::Unconscious => self.visibility_unconscious_modifier,
+            Behavior::OffMapTransit(_) => 0.0,
         }
     }
 
@@ -317,13 +324,14 @@ impl ServerConfig {
             Behavior::MoveFastTo(_) => Some(MOVE_FAST_VELOCITY),
             Behavior::SneakTo(_) => Some(MOVE_HIDE_VELOCITY),
             Behavior::Defend(_) => None,
-            Behavior::Hide(_) => None,
+            Behavior::Hide(_) | Behavior::ScatterToCover(_) | Behavior::GatherToCover(_) => None,
             Behavior::DriveTo(_) => None,
             Behavior::RotateTo(_) => None,
             Behavior::Dead => None,
             Behavior::Unconscious => None,
             Behavior::SuppressFire(_) => None,
             Behavior::EngageSoldier(_) => None,
+            Behavior::OffMapTransit(_) => None,
         }
     }
 
@@ -350,6 +358,9 @@ impl ServerConfig {
     #[rustfmt::skip]
     pub fn react(&mut self, message: &ChangeConfigMessage) {
         match message {
+            ChangeConfigMessage::GameSpeed(v) => self.game_speed = *v,
+            ChangeConfigMessage::YoloModeA(v) => self.yolo_mode_a = *v,
+            ChangeConfigMessage::YoloModeB(v) => self.yolo_mode_b = *v,
             ChangeConfigMessage::SendDebugPoints(v) => self.send_debug_points = *v,
             ChangeConfigMessage::TargetCycleDuration(v) => self.target_cycle_duration_us = *v,
             ChangeConfigMessage::SoldierUpdateFreq(v) => self.soldier_update_freq = *v,
@@ -411,6 +422,7 @@ impl ServerConfig {
 pub struct GuiConfig {
     pub target_fps: u32,
     pub interiors_update_freq: u64,
+    pub global_volume: f32,
 }
 
 impl Default for GuiConfig {
@@ -418,12 +430,16 @@ impl Default for GuiConfig {
         Self {
             target_fps: TARGET_FPS as u32,
             interiors_update_freq: INTERIORS_UPDATE_FREQ,
+            global_volume: 0.2,
         }
     }
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub enum ChangeConfigMessage {
+    GameSpeed(f32),
+    YoloModeA(bool),
+    YoloModeB(bool),
     SendDebugPoints(bool),
     TargetCycleDuration(u64),
     SoldierUpdateFreq(u64),

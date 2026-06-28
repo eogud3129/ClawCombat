@@ -127,7 +127,8 @@ impl Runner {
                     | Order::SneakTo(_, _)
                     | Order::Defend(_)
                     | Order::Hide(_)
-                    | Order::SuppressFire(_) => {}
+                    | Order::SuppressFire(_)
+                    | Order::OffMapTransit(_) => {}
                     Order::EngageSquad(squad_uuid) => {
                         let engaged_squad = self.battle_state.squad(*squad_uuid);
                         if !engaged_squad

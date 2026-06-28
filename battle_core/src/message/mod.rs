@@ -27,6 +27,8 @@ pub enum InputMessage {
     SetBattleState(BattleStateCopy),
     BattleState(BattleStateMessage),
     ChangeConfig(ChangeConfigMessage),
+    ChatCommand(String),
+    RequestTacticSuggestions(String),
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -35,4 +37,5 @@ pub enum OutputMessage {
     BattleState(BattleStateMessage),
     ClientState(ClientStateMessage),
     ChangeConfig(ChangeConfigMessage),
+    TacticSuggestions(Vec<(String, String, f32)>),
 }

@@ -53,6 +53,26 @@ impl Runner {
 
             let distance = distance_between_points(&soldier.world_point(), point);
 
+            // [Auto-Scatter/Hide 전략] 폭발(포격/수류탄) 지점 반경 15m 이내의 모든 보병은 위협을 인지하고 강제로 흩어져 엄폐(Hide)합니다.
+            if distance.meters() <= 15 && soldier.alive() && !soldier.unconscious() {
+                messages.push(RunnerMessage::BattleState(
+                    battle_core::state::battle::message::BattleStateMessage::Soldier(
+                        soldier.uuid(),
+                        battle_core::state::battle::message::SoldierMessage::SetOrder(
+                            battle_core::order::Order::Hide(battle_core::types::Angle(0.))
+                        )
+                    )
+                ));
+                messages.push(RunnerMessage::BattleState(
+                    battle_core::state::battle::message::BattleStateMessage::Soldier(
+                        soldier.uuid(),
+                        battle_core::state::battle::message::SoldierMessage::SetBehavior(
+                            battle_core::behavior::Behavior::Hide(battle_core::types::Angle(0.))
+                        )
+                    )
+                ));
+            }
+
             // TODO : Move into dedicated struct ?
             if let (
                 Some(direct_death_rayons),

@@ -52,6 +52,14 @@ pub enum SoldierMessage {
     ReloadWeapon(WeaponClass),
     WeaponShot(WeaponClass, Shot),
     SetLastShootFrameI(u64),
+    SetLastShotFrameI(u64),
+    PromiseSupport(u64),
+    CheckSupportPromise,
+    ClearSupportPromise,
+    RelieveStress(u32),
+    ConsumeGrenade,
+    SetLastGrenadeFrameI(u64),
+    ReplenishAmmunition,
 }
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]

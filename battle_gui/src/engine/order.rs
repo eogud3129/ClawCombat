@@ -165,7 +165,8 @@ impl Engine {
             | Order::Idle
             | Order::MoveTo(_, _)
             | Order::MoveFastTo(_, _)
-            | Order::SneakTo(_, _) => {
+            | Order::SneakTo(_, _)
+            | Order::OffMapTransit(_) => {
                 // No direct solving in placement for these orders
                 vec![]
             }
@@ -266,7 +267,8 @@ impl Engine {
             | Order::Idle
             | Order::MoveTo(_, _)
             | Order::MoveFastTo(_, _)
-            | Order::SneakTo(_, _) => {
+            | Order::SneakTo(_, _)
+            | Order::OffMapTransit(_) => {
                 // No direct solving in placement for these orders
                 vec![]
             }

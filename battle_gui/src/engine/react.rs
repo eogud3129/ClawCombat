@@ -1,7 +1,7 @@
 use battle_core::{message::InputMessage, state::battle::message::SideEffect};
 use ggez::{Context, GameError, GameResult};
 
-use super::{message::EngineMessage, Engine};
+use super::{message::{EngineMessage, GuiStateMessage}, Engine};
 
 impl Engine {
     pub fn react(&mut self, messages: Vec<EngineMessage>, ctx: &mut Context) -> GameResult {
@@ -34,7 +34,7 @@ impl Engine {
                     //
                     self.gui_state.react(&gui_state_message, ctx)
                 }
-                EngineMessage::PlaySound(sound) => self.player.play(&sound, ctx)?,
+                EngineMessage::PlaySound(sound) => self.player.play(&sound, self.config.global_volume, ctx)?,
                 EngineMessage::Graphics(graphics_message) => self.graphics.react(
                     graphics_message,
                     self.battle_state.map(),
@@ -96,6 +96,38 @@ impl Engine {
                     self.gui_state.draw_decor = !self.gui_state.draw_decor
                 }
                 EngineMessage::Exit => ctx.request_quit(),
+                EngineMessage::SendChatCommand(command) => {
+                    let mut target_squads = vec![];
+                    let tokens: Vec<&str> = command.split_whitespace().collect();
+                    for t in &tokens {
+                        if t.starts_with('@') {
+                            let s = t.trim_start_matches('@').trim_end_matches("분대");
+                            if let Ok(id) = s.parse::<usize>() {
+                                target_squads.push(battle_core::types::SquadUuid(id));
+                            }
+                        }
+                    }
+                    if target_squads.is_empty() {
+                        for squad_uuid in self.battle_state.squads().keys() {
+                            let leader_idx = self.battle_state.squad(*squad_uuid).leader();
+                            if self.battle_state.soldier(leader_idx).side() == &battle_core::game::Side::A {
+                                target_squads.push(*squad_uuid);
+                            }
+                        }
+                    }
+                    
+                    self.gui_state.react(&GuiStateMessage::AddChatTask(command.clone(), target_squads), ctx);
+
+                    if let Err(error) = self.output.send(vec![InputMessage::ChatCommand(command)]) {
+                        eprintln!("Error when try to send chat command to server : {}", error);
+                    }
+                    self.gui_state.clear_chat_input();
+                }
+                EngineMessage::RequestTacticSuggestions(query) => {
+                    if let Err(error) = self.output.send(vec![InputMessage::RequestTacticSuggestions(query)]) {
+                        eprintln!("Error when try to request tactic suggestions to server : {}", error);
+                    }
+                }
             }
         }
 

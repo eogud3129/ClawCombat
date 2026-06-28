@@ -1,0 +1,279 @@
+#!/usr/bin/env -S uv run --quiet
+# /// script
+# requires-python = "~=3.10"
+# dependencies = [
+#   "gguf @ git+https://github.com/PrismML-Eng/llama.cpp.git#subdirectory=gguf-py",
+#   "numpy~=2.4",
+# ]
+# ///
+"""
+Extract a Bonsai/Qwen3-family Q1_0, Q2_0, or Q8_0 GGUF into a flat directory
+the Rust runtime can load.
+
+Output layout (under --out, default ./model):
+  config.ini        hyperparams + tensor manifest (offsets & shapes within
+                    the 5 grouped weight buffers)
+  weights_attn.bin
+  weights_ffn_gate_up.bin
+  weights_ffn_down.bin
+  weights_norms.bin
+  weights_embed_lmhead.bin
+  vocab.bin         flat utf-8 bytes for all tokens
+  vocab_offsets.bin u32 array of length n_vocab+1: byte offsets into vocab.bin
+  merges.txt        BPE merges in rank order (one "a b\n" per line). Used by
+                    `scripts/bpe.py` to encode prompts; not consumed by
+                    the Rust runtime.
+
+Q1_0 tensors store 128-element blocks as 16 bytes of sign bits + 2-byte FP16
+scale (= 18 B/block); Q2_0 tensors store the same 128-element blocks as
+32 bytes of 2-bit codes + 2-byte FP16 scale (= 34 B/block). Q8_0 is the GGML-
+native 32-element block (32 i8 + 2-byte FP16 scale = 34 B/block); we treat it
+as a 128-element super-block of 4 native sub-blocks (= 8 B d + 128 B qs per
+super-block) so all three formats share `nb = n_in/128`. The model-wide format
+is autodetected from the GGUF; `quant_format` in `config.ini` records which
+one. Per row, we split into a d-array (FP16 scales — `nb` for Q1_0/Q2_0,
+`4*nb` for Q8_0) followed by a qs-array; both halves are u32-aligned. Each
+tensor's region is 4-byte padded.
+
+Norms (originally F32 in the GGUF) are downcast to F16 on disk so the
+runtime can bind them as `array<f16>` without a load-time conversion.
+
+Prompts are NOT encoded here. Run `scripts/bpe.py` for that.
+
+Usage:
+  uv run scripts/extract.py path/to/Bonsai-8B-Q1_0.gguf --out ./model-8b
+  uv run scripts/extract.py path/to/Bonsai-4B-Q1_0.gguf --out ./model
+  uv run scripts/extract.py path/to/Ternary-Bonsai-4B-Q2_0.gguf --out ./model-ternary-4b
+  uv run scripts/extract.py path/to/Qwen3-4B-Q8_0.gguf --out ./model-q8
+"""
+import argparse, os, struct
+import gguf
+import numpy as np
+
+
+def field_str(f):
+    if f is None: return None
+    return f.contents()
+
+
+def main():
+    ap = argparse.ArgumentParser(
+        description="Extract a Bonsai/Qwen3 Q1_0, Q2_0, or Q8_0 GGUF into a flat model dir.",
+    )
+    ap.add_argument("gguf", help="path to a Bonsai-*.gguf or Qwen3-*.gguf (Q1_0/Q2_0/Q8_0)")
+    ap.add_argument("--out", default="./model",
+                    help="output directory (default: ./model)")
+    args = ap.parse_args()
+
+    os.makedirs(args.out, exist_ok=True)
+    r = gguf.GGUFReader(args.gguf)
+
+    # ---- collect hyperparams ------------------------------------------------
+    fld = lambda k: field_str(r.fields.get(k))
+    tokens_field = r.fields["tokenizer.ggml.tokens"]
+    cfg = {
+        "n_layer":   int(fld("qwen3.block_count")),
+        "n_embd":    int(fld("qwen3.embedding_length")),
+        "n_ff":      int(fld("qwen3.feed_forward_length")),
+        "n_head":    int(fld("qwen3.attention.head_count")),
+        "n_kv_head": int(fld("qwen3.attention.head_count_kv")),
+        "head_dim":  int(fld("qwen3.attention.key_length")),
+        "rope_freq_base": float(fld("qwen3.rope.freq_base")),
+        "rms_eps":   float(fld("qwen3.attention.layer_norm_rms_epsilon")),
+        "n_vocab":   len(tokens_field.data),
+        "eos_token_id":     int(fld("tokenizer.ggml.eos_token_id")),
+        "padding_token_id": int(fld("tokenizer.ggml.padding_token_id")),
+        "add_bos":   bool(fld("tokenizer.ggml.add_bos_token") or False),
+        "context_length": int(fld("qwen3.context_length")),
+        # Bonsai GGUFs carry the (pre-scaling) RoPE original context length as
+        # a separate field; stock Qwen3 GGUFs lack it — fall back to
+        # context_length in that case (no YaRN/NTK scaling configured).
+        "rope_orig_context": int(
+            fld("qwen3.rope.scaling.original_context_length") or fld("qwen3.context_length")
+        ),
+    }
+    cfg["n_kv_groups"] = cfg["n_head"] // cfg["n_kv_head"]
+    cfg["q_dim"]  = cfg["n_head"] * cfg["head_dim"]
+    cfg["kv_dim"] = cfg["n_kv_head"] * cfg["head_dim"]
+
+    print("config:", cfg)
+
+    # ---- index tensors by name -----------------------------------------------
+    by_name = {t.name: t for t in r.tensors}
+    n_layer = cfg["n_layer"]
+
+    QK = 128  # weights per super-block (Q1_0/Q2_0 native; Q8_0 = 4 × native 32-elem block)
+    # (gguf type, super-block bytes, native blocks per super-block) per supported quant format.
+    QFORMATS = {
+        "Q1_0": (gguf.GGMLQuantizationType.Q1_0, 18, 1),  # 2 d + 16 qs
+        "Q2_0": (gguf.GGMLQuantizationType.Q2_0, 34, 1),  # 2 d + 32 qs
+        "Q8_0": (gguf.GGMLQuantizationType.Q8_0, 4 * 34, 4),  # 4 × (2 d + 32 qs) = 8 d + 128 qs
+    }
+    def pad4(n):
+        return (n + 3) & ~3
+
+    # Autodetect the model-wide quant format from the first Q tensor encountered.
+    # All Q tensors in a Bonsai model share a single format.
+    detected = None
+    for t in r.tensors:
+        for fmt, (gtype, _, _) in QFORMATS.items():
+            if t.tensor_type == gtype:
+                detected = fmt
+                break
+        if detected is not None:
+            break
+    if detected is None:
+        raise RuntimeError("no Q1_0/Q2_0/Q8_0 tensors found in GGUF")
+    cfg["quant_format"] = detected
+    QUANT_GTYPE, QUANT_BLK_BYTES, NATIVE_PER_SUPER = QFORMATS[detected]
+    print(f"quant format: {detected} ({QUANT_BLK_BYTES} B per 128-elem super-block)")
+
+    manifest = {"tensors": {}}
+
+    def write_tensor(out_f, t, name, expected_dtype):
+        """Write tensor bytes to current output file with a layout suitable for
+        u32-aligned reads in WGSL. For Q1_0/Q2_0 we split into a d-array (FP16
+        scales) followed by a qs-array (raw 16- or 32-byte code blocks). Both
+        halves are u32-aligned because n_rows*(K/128) is even for all our
+        tensors. For F32 we emit f32 contiguous; for F16 we emit f16 contiguous
+        (the GGUF source may be F32 or F16 — F32 sources are downcast on the fly)."""
+        shape = [int(s) for s in t.shape]
+        entry = {
+            "dtype": expected_dtype,
+            "shape": shape,
+            "buffer": os.path.basename(out_f.name),
+            "offset": out_f.tell(),
+        }
+        data = t.data
+        if t.tensor_type == QUANT_GTYPE:
+            assert expected_dtype == detected, f"{name}: dtype mismatch"
+            n_in, n_out = shape[0], shape[1] if len(shape) > 1 else 1
+            nb = n_in // QK
+            # For Q1_0/Q2_0: one (d, qs) pair per 128-elem super-block.
+            # For Q8_0: 4 native (d, qs) pairs per 128-elem super-block — we
+            # reshape and slice so the d-array carries `4*nb` FP16 scales per
+            # row and the qs-array carries `128*nb` i8 bytes per row.
+            native_bytes = QUANT_BLK_BYTES // NATIVE_PER_SUPER  # 18 / 34 / 34
+            raw = data.reshape(n_out, nb, NATIVE_PER_SUPER, native_bytes)
+            d_arr  = np.ascontiguousarray(raw[:, :, :, :2])    # (n_out, nb, native, 2 B)
+            qs_arr = np.ascontiguousarray(raw[:, :, :, 2:])    # (n_out, nb, native, native_bytes-2 B)
+            d_offset = out_f.tell()
+            out_f.write(d_arr.tobytes())
+            pad = pad4(out_f.tell()) - out_f.tell()
+            if pad: out_f.write(b"\x00" * pad)
+            qs_offset = out_f.tell()
+            out_f.write(qs_arr.tobytes())
+            pad = pad4(out_f.tell()) - out_f.tell()
+            if pad: out_f.write(b"\x00" * pad)
+            entry["d_offset"]  = d_offset
+            entry["qs_offset"] = qs_offset
+            entry["nb"] = nb
+        elif t.tensor_type == gguf.GGMLQuantizationType.F32:
+            if expected_dtype == "F32":
+                buf = np.ascontiguousarray(data, dtype=np.float32).tobytes()
+            elif expected_dtype == "F16":
+                buf = np.ascontiguousarray(data).astype(np.float16).tobytes()
+            else:
+                raise RuntimeError(f"{name}: F32 source cannot produce {expected_dtype}")
+            out_f.write(buf)
+            pad = pad4(out_f.tell()) - out_f.tell()
+            if pad: out_f.write(b"\x00" * pad)
+        elif t.tensor_type == gguf.GGMLQuantizationType.F16:
+            assert expected_dtype == "F16", f"{name}: F16 source must produce F16"
+            buf = np.ascontiguousarray(data, dtype=np.float16).tobytes()
+            out_f.write(buf)
+            pad = pad4(out_f.tell()) - out_f.tell()
+            if pad: out_f.write(b"\x00" * pad)
+        else:
+            raise RuntimeError(f"{name}: unsupported tensor type {t.tensor_type}")
+        entry["length"] = out_f.tell() - entry["offset"]
+        manifest["tensors"][name] = entry
+
+    Q = detected  # "Q1_0" or "Q2_0"
+
+    # ---- group A: weights_attn (per-layer Wq, Wk, Wv, Wo) -------------------
+    with open(os.path.join(args.out, "weights_attn.bin"), "wb") as f:
+        for il in range(n_layer):
+            for tag in ("attn_q", "attn_k", "attn_v", "attn_output"):
+                name = f"blk.{il}.{tag}.weight"
+                write_tensor(f, by_name[name], name, Q)
+
+    # ---- group B: weights_ffn_gate_up (Wgate, Wup) --------------------------
+    with open(os.path.join(args.out, "weights_ffn_gate_up.bin"), "wb") as f:
+        for il in range(n_layer):
+            for tag in ("ffn_gate", "ffn_up"):
+                name = f"blk.{il}.{tag}.weight"
+                write_tensor(f, by_name[name], name, Q)
+
+    # ---- group C: weights_ffn_down -----------------------------------------
+    with open(os.path.join(args.out, "weights_ffn_down.bin"), "wb") as f:
+        for il in range(n_layer):
+            name = f"blk.{il}.ffn_down.weight"
+            write_tensor(f, by_name[name], name, Q)
+
+    # ---- group D: weights_norms (norms downcast to F16 for the f16 runtime) ---
+    with open(os.path.join(args.out, "weights_norms.bin"), "wb") as f:
+        for il in range(n_layer):
+            for tag in ("attn_norm", "attn_q_norm", "attn_k_norm", "ffn_norm"):
+                name = f"blk.{il}.{tag}.weight"
+                write_tensor(f, by_name[name], name, "F16")
+        write_tensor(f, by_name["output_norm.weight"], "output_norm.weight", "F16")
+
+    # ---- group E: weights_embed_lmhead -------------------------------------
+    # Bonsai/Qwen3 models have tied embeddings (no separate output.weight). The LM head
+    # uses the same tensor as the embedding (row-gather for embed; full matvec
+    # for the head, since the Q1_0 row-major layout [n_embd, n_vocab] gives
+    # n_vocab rows of n_embd elements — the right shape for both ops).
+    cfg["tied_embeddings"] = "output.weight" not in by_name
+    with open(os.path.join(args.out, "weights_embed_lmhead.bin"), "wb") as f:
+        write_tensor(f, by_name["token_embd.weight"], "token_embd.weight", Q)
+        if not cfg["tied_embeddings"]:
+            write_tensor(f, by_name["output.weight"], "output.weight", Q)
+
+    # ---- vocab dump --------------------------------------------------------
+    n_vocab = cfg["n_vocab"]
+    vocab_bytes = bytearray()
+    offsets = [0]
+    for i in tokens_field.data:
+        b = bytes(tokens_field.parts[i])
+        vocab_bytes.extend(b)
+        offsets.append(len(vocab_bytes))
+    with open(os.path.join(args.out, "vocab.bin"), "wb") as f:
+        f.write(bytes(vocab_bytes))
+    with open(os.path.join(args.out, "vocab_offsets.bin"), "wb") as f:
+        f.write(struct.pack(f"<{n_vocab+1}I", *offsets))
+
+    # ---- merges (for offline tokenization via scripts/bpe.py) ----------
+    # Each merge is a space-separated pair of byte-level-encoded strings, in
+    # rank order (one per line). Plain UTF-8 text — no header.
+    merges_field = r.fields["tokenizer.ggml.merges"]
+    with open(os.path.join(args.out, "merges.txt"), "w", encoding="utf-8", newline="\n") as f:
+        for idx in merges_field.data:
+            line = bytes(merges_field.parts[idx]).decode("utf-8")
+            # Sanity: a merges entry is "<a> <b>". Pass through unchanged.
+            f.write(line)
+            if not line.endswith("\n"):
+                f.write("\n")
+
+    # ---- final config -------------------------------------------------------
+    def _ini_fmt(v):
+        if isinstance(v, bool): return "true" if v else "false"
+        if isinstance(v, list): return ",".join(str(x) for x in v)
+        return str(v)
+
+    with open(os.path.join(args.out, "config.ini"), "w", newline="\n") as f:
+        for k, v in cfg.items():
+            f.write(f"{k} = {_ini_fmt(v)}\n")
+        for name, entry in manifest["tensors"].items():
+            f.write(f"\n[{name}]\n")
+            for k, v in entry.items():
+                f.write(f"{k} = {_ini_fmt(v)}\n")
+
+    sizes = {os.path.basename(p): os.path.getsize(os.path.join(args.out, p))
+             for p in os.listdir(args.out) if p.endswith(".bin")}
+    print("output bytes:", sizes)
+    print(f"merges.txt:  {os.path.getsize(os.path.join(args.out, 'merges.txt'))} bytes")
+
+
+if __name__ == "__main__":
+    main()

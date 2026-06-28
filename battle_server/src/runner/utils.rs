@@ -22,13 +22,13 @@ impl Runner {
                     .map(|next_point| angle(&next_point, reference_point))
             }
             Behavior::Defend(angle) => Some(*angle),
-            Behavior::Hide(angle) => Some(*angle),
+            Behavior::Hide(angle) | Behavior::ScatterToCover(angle) | Behavior::GatherToCover(angle) => Some(*angle),
             Behavior::DriveTo(_) => None,
             Behavior::RotateTo(_) => None,
             Behavior::SuppressFire(point) => Some(angle(point, reference_point)),
             Behavior::EngageSoldier(_) => None,
             // TODO: keep angle for dead/unconscious soldiers
-            Behavior::Dead | Behavior::Unconscious => None,
+            Behavior::Dead | Behavior::Unconscious | Behavior::OffMapTransit(_) => None,
         }
     }
 

@@ -128,6 +128,12 @@ impl IntoSprite for CurrentAction {
                 ACTION_REL_WIDTH,
                 ACTION_REL_HEIGHT,
             ],
+            CurrentAction::Throwing => [
+                ACTION_SUPPRESS_FIRING_START_REL_X,
+                ACTION_SUPPRESS_FIRING_START_REL_Y,
+                ACTION_REL_WIDTH,
+                ACTION_REL_HEIGHT,
+            ],
         }
     }
 }

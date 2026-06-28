@@ -93,11 +93,14 @@ impl Minimap {
 
     pub fn draw_squads(&self, ctx: &Context, mesh_builder: &mut MeshBuilder) -> GameResult {
         for position in &self.blue_positions {
-            let stroke = self.selected_squads.contains(position);
-            self.draw_side_squads(ctx, mesh_builder, position, Color::BLUE, stroke)?
+            let is_selected = self.selected_squads.contains(position);
+            let color = if is_selected { Color::WHITE } else { Color::BLUE };
+            self.draw_side_squads(ctx, mesh_builder, position, color, is_selected)?
         }
         for position in &self.red_positions {
-            self.draw_side_squads(ctx, mesh_builder, position, Color::RED, false)?
+            let is_selected = self.selected_squads.contains(position);
+            let color = if is_selected { Color::WHITE } else { Color::RED };
+            self.draw_side_squads(ctx, mesh_builder, position, color, is_selected)?
         }
 
         Ok(())

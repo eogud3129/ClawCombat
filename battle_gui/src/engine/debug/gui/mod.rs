@@ -54,10 +54,8 @@ impl Engine {
         }
 
         let drawable_size = ctx.gfx.drawable_size();
-        self.egui_backend
-            .input
-            .set_scale_factor(EGUI_SCALE, drawable_size);
-        let egui_ctx = self.egui_backend.ctx();
+        self.egui_backend.set_scale_factor(EGUI_SCALE, drawable_size);
+        let egui_ctx = self.egui_backend.inner.ctx();
         let mut messages = vec![];
 
         egui::Window::new("Debug")
@@ -73,7 +71,6 @@ impl Engine {
             GuiStateMessage::SetDebugGuiHovered(egui_ctx.is_pointer_over_area()),
         ));
 
-        self.egui_backend.update(ctx);
         messages
     }
 }

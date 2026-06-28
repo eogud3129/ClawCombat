@@ -9,4 +9,16 @@ members = [
     "battle_gui",
     "battle_tools",
     "examples",
+    "llm_agent",
 ]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.70"
+license = "MIT"
+repository = "https://github.com/buxx/OpenCombat"
+authors = ["Sevajol Bastien <contact@bux.fr>"]
+
+[workspace.dependencies]
+thiserror = "1.0.39"

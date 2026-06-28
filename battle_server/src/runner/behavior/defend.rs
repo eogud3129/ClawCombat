@@ -30,8 +30,16 @@ impl Runner {
             }
         }
 
-        let (moves, debug_points) = CoverFinder::new(&self.battle_state, &self.config)
-            .find_arbitrary_cover_points(squad, leader);
+        // 행동(Behavior) 종류에 따라 새로 개발한 흩어짐/뭉침 알고리즘을 분기하여 호출
+        let (moves, debug_points) = match behavior {
+            // (Note: Behavior 에러가 난다면, core의 Enum에 ScatterToCover, GatherToCover 추가가 필요함)
+            Behavior::ScatterToCover(_) => CoverFinder::new(&self.battle_state, &self.config)
+                .find_scatter_cover_points(squad, leader),
+            Behavior::GatherToCover(_) => CoverFinder::new(&self.battle_state, &self.config)
+                .find_gather_cover_points(squad, leader),
+            _ => CoverFinder::new(&self.battle_state, &self.config)
+                .find_arbitrary_cover_points(squad, leader),
+        };
 
         for (member_id, from_world_point, cover_world_point) in &moves {
             let path = WorldPaths::new(vec![WorldPath::new(vec![
@@ -39,15 +47,17 @@ impl Runner {
                 *cover_world_point,
             ])]);
 
+            // 이동 후 최종 상태(then_order) 결정
             let then_order = match behavior {
-                Behavior::Hide(angle) => Order::Hide(*angle),
+                Behavior::Hide(angle) | Behavior::ScatterToCover(angle) | Behavior::GatherToCover(angle) => Order::Hide(*angle),
                 Behavior::Defend(angle) => Order::Defend(*angle),
                 _ => unreachable!(),
             };
 
+            // 이동하는 방식 결정 (흩어질 땐 포복, 뭉칠 땐 빠른 달리기)
             let order = match behavior {
-                Behavior::Hide(_) => Order::SneakTo(path, Some(Box::new(then_order))),
-                Behavior::Defend(_) => Order::MoveFastTo(path, Some(Box::new(then_order))),
+                Behavior::Hide(_) | Behavior::ScatterToCover(_) => Order::SneakTo(path, Some(Box::new(then_order))),
+                Behavior::Defend(_) | Behavior::GatherToCover(_) => Order::MoveFastTo(path, Some(Box::new(then_order))),
                 _ => unreachable!(),
             };
             orders.push((self.battle_state.soldier(*member_id), order));

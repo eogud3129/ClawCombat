@@ -53,11 +53,23 @@ impl Runner {
             let from = &soldier.world_point();
             let distance = distance_between_points(from, point);
             // FIXME these values in config
-            let body_surface = match soldier.body() {
+            // [자세 중심 피격 면적 통일] 엎드림(Lying) 상태일 때 가장 안전하도록 기본 면적을 축소합니다.
+            let mut body_surface = match soldier.body() {
                 Body::StandUp => 1000,
                 Body::Crouched => 700,
-                Body::Lying => 600,
+                Body::Lying => 200, 
             };
+            
+            // 이동 기동(SneakTo) 중일 때는 움직임으로 인해 면적이 미세하게 넓어지는 패널티 부여 (+50)
+            if matches!(soldier.behavior(), battle_core::behavior::Behavior::SneakTo(_)) {
+                body_surface += 50; 
+            }
+            
+            // 완전 매복(Hide) 중일 때는 타일에 완벽히 동화되어 회피율(면적 감소) 보너스 (-50)
+            if matches!(soldier.behavior(), battle_core::behavior::Behavior::Hide(_)) {
+                body_surface -= 50;
+            }
+
             let body_impact = distance.millimeters() <= body_surface;
             let covered = distance.meters() < 1 && cover.compute(body_impact);
             let proximity = !body_impact && distance.meters() < 30;

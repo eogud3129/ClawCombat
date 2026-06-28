@@ -16,8 +16,13 @@ impl Engine {
                 .soldiers()
                 .iter()
                 .find(|s| s.side() == self.gui_state.side())
-                .expect("Must have at least one soldier to start battle")
-                .world_point();
+                .map(|s| s.world_point())
+                .unwrap_or_else(|| {
+                    battle_core::types::WorldPoint::new(
+                        self.battle_state.map().visual_width() as f32 / 2.0,
+                        self.battle_state.map().visual_height() as f32 / 2.0,
+                    )
+                });
             return vec![
                 EngineMessage::PlaySound(Sound::DrumMultiHits),
                 EngineMessage::GuiState(GuiStateMessage::CenterSceneOn(center_on)),
@@ -39,10 +44,8 @@ impl Engine {
         }
 
         let drawable_size = ctx.gfx.drawable_size();
-        self.egui_backend
-            .input
-            .set_scale_factor(EGUI_SCALE, drawable_size);
-        let egui_ctx = self.egui_backend.ctx();
+        self.egui_backend.set_scale_factor(EGUI_SCALE, drawable_size);
+        let egui_ctx = self.egui_backend.inner.ctx();
         let mut messages = vec![];
 
         Window::new("Placement phase")
@@ -68,7 +71,6 @@ impl Engine {
                 })
             });
 
-        self.egui_backend.update(ctx);
         messages
     }
 }

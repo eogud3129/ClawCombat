@@ -1,6 +1,6 @@
 use ggez::{
-    graphics::{Color, DrawMode, MeshBuilder},
-    GameResult,
+    graphics::{Canvas, Color, DrawMode, DrawParam, Mesh, MeshBuilder, Text, TextFragment},
+    Context, GameResult,
 };
 
 use battle_core::{
@@ -92,6 +92,15 @@ impl Engine {
         // Display selected squad formation positions
         for squad_id in &self.gui_state.selected_squads().1 {
             let squad = self.battle_state.squad(*squad_id);
+            
+            // [버그 수정: 단일 생존자 잔류 시 중대원 전체 1줄 나열 정렬 데드락 방지]
+            // 분대에 생존한 대원이 1명 이하이거나 리더 홀로 남았을 경우 진형 벡터 공식의 가중치가 파괴되어 중대 전체가 일렬로 서는 버그가 발생합니다.
+            // 인원이 혼자 남았을 때는 대형 포메이션 재정렬 연산을 생략하고 독립 개별 포지션을 유지하도록 우회 보호합니다.
+            let alive_members_count = squad.members().iter().filter(|m| m.0 < self.battle_state.soldiers().len() && self.battle_state.soldier(**m).alive()).count();
+            if alive_members_count <= 1 {
+                continue;
+            }
+
             let leader = self.battle_state.soldier(squad.leader());
             for (_, point) in squad_positions(squad, Formation::Line, leader, None) {
                 let window_point = self.gui_state.window_point_from_world_point(point);
@@ -411,5 +420,126 @@ impl Engine {
             }
             _ => {}
         }
+    }
+
+    pub fn draw_debug_grid(
+        &self,
+        ctx: &mut Context,
+        canvas: &mut Canvas,
+        draw_param: DrawParam,
+    ) -> GameResult {
+        if !self.gui_state.debug_grid {
+            return Ok(());
+        }
+
+        let map = self.battle_state.map();
+        let grid_size = 30; // 3배 확장: 타일 30개 단위를 1개의 전술 구역으로 지정
+        let cell_width = map.tile_width() as f32 * grid_size as f32;
+        let cell_height = map.tile_height() as f32 * grid_size as f32;
+        
+        // 깃발(Flag) 위치에 그리드 박스가 딱 맞물리도록 오프셋(Offset) 동적 계산
+        let mut offset_x = 0.0;
+        let mut offset_y = 0.0;
+        if let Some(first_flag) = map.flags().first() {
+            let flag_center = first_flag.position();
+            // 깃발 중심이 박스의 정중앙에 오도록 그리드 시작점을 시프트
+            offset_x = flag_center.x % cell_width - (cell_width / 2.0);
+            offset_y = flag_center.y % cell_height - (cell_height / 2.0);
+        }
+
+        let mut mesh_builder = MeshBuilder::new();
+        let grid_color = Color::new(1.0, 1.0, 1.0, 0.7); // 투명도 0.7로 진하게 상향
+
+        // 맵 전역을 커버하도록 넉넉하게 반복문 범위 설정
+        for x in -5..100 {
+            let px = offset_x + (x as f32 * cell_width);
+            if px >= 0.0 && px <= map.visual_width() as f32 {
+                mesh_builder.line(
+                    &[WorldPoint::new(px, 0.0).to_vec2(), WorldPoint::new(px, map.visual_height() as f32).to_vec2()],
+                    2.0,
+                    grid_color,
+                )?;
+            }
+        }
+
+        for y in -5..100 {
+            let py = offset_y + (y as f32 * cell_height);
+            if py >= 0.0 && py <= map.visual_height() as f32 {
+                mesh_builder.line(
+                    &[WorldPoint::new(0.0, py).to_vec2(), WorldPoint::new(map.visual_width() as f32, py).to_vec2()],
+                    2.0,
+                    grid_color,
+                )?;
+            }
+        }
+
+        // 섹터 선택 색상(투명 레이어) 렌더링
+        let chars: Vec<char> = "ABCDEFGHIJKLMNOPQRSTUVWXYZ".chars().collect();
+        let chat_input = self.gui_state.chat_input();
+        let move_sectors: Vec<&str> = chat_input.split_whitespace().filter(|w| w.starts_with('&')).map(|w| w.trim_start_matches('&')).collect();
+        let attack_sectors: Vec<&str> = chat_input.split_whitespace().filter(|w| w.starts_with('#')).map(|w| w.trim_start_matches('#')).collect();
+
+        for y in -5..100 {
+            for x in -5..100 {
+                let px = offset_x + (x as f32 * cell_width);
+                let py = offset_y + (y as f32 * cell_height);
+                
+                if px < 0.0 || py < 0.0 || px >= map.visual_width() as f32 || py >= map.visual_height() as f32 {
+                    continue;
+                }
+
+                let letter = chars.get((y + 5) as usize % chars.len()).unwrap_or(&'?');
+                let number = (x + 6) as usize;
+                let text_str = format!("{}{}", letter, number);
+
+                if move_sectors.contains(&text_str.as_str()) {
+                    mesh_builder.rectangle(
+                        ggez::graphics::DrawMode::fill(),
+                        ggez::graphics::Rect::new(px, py, cell_width, cell_height),
+                        Color::new(1.0, 1.0, 1.0, 0.3),
+                    )?;
+                }
+                
+                if attack_sectors.contains(&text_str.as_str()) {
+                    mesh_builder.rectangle(
+                        ggez::graphics::DrawMode::fill(),
+                        ggez::graphics::Rect::new(px, py, cell_width, cell_height),
+                        Color::new(1.0, 0.0, 0.0, 0.3),
+                    )?;
+                }
+            }
+        }
+
+        let mesh = Mesh::from_data(ctx, mesh_builder.build());
+        canvas.draw(&mesh, draw_param);
+
+        // A1, B2, H5 등 문자 조합 네이밍 렌더링
+        for y in -5..100 {
+            for x in -5..100 {
+                let px = offset_x + (x as f32 * cell_width);
+                let py = offset_y + (y as f32 * cell_height);
+                
+                if px < 0.0 || py < 0.0 || px >= map.visual_width() as f32 || py >= map.visual_height() as f32 {
+                    continue;
+                }
+
+                let letter = chars.get((y + 5) as usize % chars.len()).unwrap_or(&'?');
+                let number = (x + 6) as usize;
+                let text_str = format!("{}{}", letter, number);
+                
+                let text_px = px + 15.0;
+                let text_py = py + 15.0;
+
+                // 스크롤 및 줌 상태를 반영하여 정밀하게 좌표 계산
+                let dest_x = text_px * self.gui_state.zoom.factor() + self.gui_state.display_scene_offset.x;
+                let dest_y = text_py * self.gui_state.zoom.factor() + self.gui_state.display_scene_offset.y;
+
+                let mut text = Text::new(TextFragment::new(text_str).color(Color::new(1.0, 1.0, 1.0, 0.7)));
+                text.set_scale(32.0 * self.gui_state.zoom.factor());
+                canvas.draw(&text, DrawParam::default().dest(glam::Vec2::new(dest_x, dest_y)));
+            }
+        }
+
+        Ok(())
     }
 }

@@ -1,3 +1,10 @@
+@echo off
+chcp 65001 > nul
+call "C:\Program Files (x86)\Microsoft Visual Studio\2019\BuildTools\VC\Auxiliary\Build\vcvars64.bat"
+
+:: LLVM Clang 경로 설정 (bindgen 에러 해결)
+set LIBCLANG_PATH=C:\Program Files\LLVM\bin
+
 :: 1. vcpkg가 설치한 실제 libzmq의 설정 파일 경로 지정
 set PKG_CONFIG_PATH=C:\vcpkg\installed\x64-windows\lib\pkgconfig
 

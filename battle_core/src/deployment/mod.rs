@@ -137,6 +137,10 @@ pub enum DeploymentReaderError {
     Format(#[from] serde_json::Error),
 }
 
+fn default_grenades() -> u8 {
+    3
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct SoldierDeployment {
     uuid: SoldierIndex,
@@ -148,6 +152,8 @@ pub struct SoldierDeployment {
     magazines: Vec<Magazine>,
     order: Order,
     behavior: Behavior,
+    #[serde(default = "default_grenades")]
+    grenades: u8,
 }
 
 impl SoldierDeployment {
@@ -161,6 +167,7 @@ impl SoldierDeployment {
         magazines: Vec<Magazine>,
         order: Order,
         behavior: Behavior,
+        grenades: u8,
     ) -> Self {
         Self {
             uuid,
@@ -172,6 +179,7 @@ impl SoldierDeployment {
             magazines,
             order,
             behavior,
+            grenades,
         }
     }
 
@@ -210,6 +218,10 @@ impl SoldierDeployment {
     pub fn type_(&self) -> &SoldierType {
         &self.type_
     }
+
+    pub fn grenades(&self) -> u8 {
+        self.grenades
+    }
 }
 
 impl From<&Soldier> for SoldierDeployment {
@@ -224,6 +236,7 @@ impl From<&Soldier> for SoldierDeployment {
             magazines: soldier.magazines().clone(),
             order: soldier.order().clone(),
             behavior: soldier.behavior().clone(),
+            grenades: soldier.grenades(),
         }
     }
 }

@@ -48,15 +48,20 @@ pub fn squad_positions(
                 }
 
                 if counter % 2 == 0 {
-                    x_offset += 10.0;
-                    y_offset += 0.0;
+                    // [버그 수정: Bounding Overwatch(교대 전진) 정상화]
+                    // 산개 간격이 25m로 넓으면 부하들이 항상 분대장과 5m 이상 떨어져 있게 되어, 
+                    // 분대장은 영원히 멈추고 부하 3명만 계속 움직이는(3명만 움직임) 버그가 발생합니다.
+                    // 대형 간격을 2m로 좁혀 부하들이 분대장 근처(5m 이내)로 완벽히 집결할 수 있도록 수정합니다.
+                    x_offset += 2.0; 
+                    y_offset += 2.0; 
                 }
                 counter += 1;
 
                 let (x_offset_, y_offset_) = if i % 2 == 0 {
                     (x_offset, y_offset)
                 } else {
-                    (-x_offset, -y_offset)
+                    // 양쪽 날개로 산개하도록 -y가 아닌 +y로 통일하여 완벽한 V자(Wedge) 대형 구축
+                    (-x_offset, y_offset)
                 };
 
                 let member_scene_point =
@@ -268,6 +273,7 @@ pub enum CurrentAction {
     Hiding,
     Driving,
     Rotating,
+    Throwing,
     // ...
 }
 
@@ -277,6 +283,10 @@ impl CurrentAction {
         _squad: &SquadComposition,
         soldier: &Soldier,
     ) -> Self {
+        if matches!(soldier.gesture(), Gesture::Throwing(_, _)) {
+            return Self::Throwing;
+        }
+
         match soldier.behavior() {
             Behavior::MoveTo(_) => Self::Walking,
             Behavior::MoveFastTo(_) => Self::Running,
@@ -284,20 +294,22 @@ impl CurrentAction {
             Behavior::DriveTo(_) => Self::Driving,
             Behavior::RotateTo(_) => Self::Rotating,
             Behavior::Defend(_) => Self::Defending,
-            Behavior::Hide(_) => Self::Hiding,
+            Behavior::Hide(_) | Behavior::ScatterToCover(_) | Behavior::GatherToCover(_) => Self::Hiding,
             Behavior::SuppressFire(_) => match soldier.gesture() {
                 Gesture::Idle => Self::Idle,
                 Gesture::Reloading(_, _) => Self::Reloading,
                 Gesture::Aiming(_, _) => Self::Aiming,
                 Gesture::Firing(_, _) => Self::SuppressFiring,
+                Gesture::Throwing(_, _) => Self::Throwing,
             },
             Behavior::EngageSoldier(_) => match soldier.gesture() {
                 Gesture::Idle => Self::Idle,
                 Gesture::Reloading(_, _) => Self::Reloading,
                 Gesture::Aiming(_, _) => Self::Aiming,
                 Gesture::Firing(_, _) => Self::TargetFiring,
+                Gesture::Throwing(_, _) => Self::Throwing,
             },
-            Behavior::Idle(_) | Behavior::Dead | Behavior::Unconscious => Self::Idle,
+            Behavior::Idle(_) | Behavior::Dead | Behavior::Unconscious | Behavior::OffMapTransit(_) => Self::Idle,
         }
     }
 
@@ -315,6 +327,7 @@ impl CurrentAction {
             CurrentAction::Hiding => "hiding",
             CurrentAction::Driving => "driving",
             CurrentAction::Rotating => "rotating",
+            CurrentAction::Throwing => "throwing grenade",
         }
     }
 }

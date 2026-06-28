@@ -39,6 +39,7 @@ pub struct GuiState {
     pub debug_visibilities: bool,
     pub debug_targets: bool,
     pub debug_physics_areas: bool,
+    pub debug_grid: bool,
     /// Current debug terrain to apply
     pub debug_terrain: DebugTerrain,
     /// Current debug physics to apply
@@ -86,6 +87,15 @@ pub struct GuiState {
     map_height: f32,
     //
     is_fullscreen: bool,
+    //
+    chat_input: String,
+    display_chat_gui: bool, 
+    chat_focus_needed: bool, 
+    pub available_templates: Vec<String>,
+    pub selected_template_to_confirm: Option<String>,
+    pub tactic_suggestions: Vec<(String, String, f32)>,
+    pub chat_tasks: Vec<(usize, String, Vec<SquadUuid>)>,
+    pub chat_task_counter: usize,
 }
 
 impl GuiState {
@@ -104,6 +114,7 @@ impl GuiState {
             debug_visibilities: false,
             debug_targets: false,
             debug_physics_areas: false,
+            debug_grid: false,
             debug_terrain: DebugTerrain::None,
             debug_physics: DebugPhysics::None,
             display_debug_gui: false,
@@ -129,7 +140,41 @@ impl GuiState {
             map_width: map.visual_width() as f32,
             map_height: map.visual_height() as f32,
             is_fullscreen: false,
+            chat_input: String::new(),
+            display_chat_gui: false, // [추가] 시작 시 기본값은 채팅창이 숨겨진 상태(false)로 설정합니다.
+            chat_focus_needed: false,
+            available_templates: vec![],
+            selected_template_to_confirm: None,
+            tactic_suggestions: vec![],
+            chat_tasks: vec![],
+            chat_task_counter: 0,
         }
+    }
+
+    // [추가] 외부 엔진에서 현재 채팅창 활성화 상태를 조회할 수 있는 Getter 함수 제공
+    pub fn display_chat_gui(&self) -> bool {
+        self.display_chat_gui
+    }
+
+    // [추가] 포커스 요청 상태 확인 및 소비를 위한 상태 관리 함수 제공
+    pub fn chat_focus_needed(&self) -> bool {
+        self.chat_focus_needed
+    }
+
+    pub fn consume_chat_focus(&mut self) {
+        self.chat_focus_needed = false;
+    }
+
+    pub fn chat_input_mut(&mut self) -> &mut String {
+        &mut self.chat_input
+    }
+
+    pub fn chat_input(&self) -> &str {
+        &self.chat_input
+    }
+
+    pub fn clear_chat_input(&mut self) {
+        self.chat_input.clear();
     }
 
     pub fn frame_i(&self) -> u64 {
@@ -424,6 +469,30 @@ impl GuiState {
             GuiStateMessage::SetDebugPhysicsArea(value) => {
                 //
                 self.debug_physics_areas = *value
+            }
+            GuiStateMessage::ToggleChatGui => {
+                // [추가] ToggleChatGui 메시지 수신 시 상태 값을 반전시킵니다.
+                self.display_chat_gui = !self.display_chat_gui;
+                self.debug_grid = self.display_chat_gui; // [추가] 채팅창 활성화 시 디버그 그리드도 함께 활성화/비활성화
+                if self.display_chat_gui {
+                    self.chat_focus_needed = true; // 채팅창이 팝업되어 열리는 순간에만 일회성 포커스 요청 플래그를 활성화합니다.
+                }
+            }
+            GuiStateMessage::SetAvailableTemplates(templates) => {
+                self.available_templates = templates.clone();
+            }
+            GuiStateMessage::SelectTemplate(template) => {
+                self.selected_template_to_confirm = template.clone();
+            }
+            GuiStateMessage::SetTacticSuggestions(suggestions) => {
+                self.tactic_suggestions = suggestions.clone();
+            }
+            GuiStateMessage::AddChatTask(command, squads) => {
+                self.chat_task_counter += 1;
+                self.chat_tasks.push((self.chat_task_counter, command.clone(), squads.clone()));
+            }
+            GuiStateMessage::RemoveChatTask(id) => {
+                self.chat_tasks.retain(|t| t.0 != *id);
             }
         }
     }

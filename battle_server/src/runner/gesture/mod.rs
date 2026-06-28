@@ -22,7 +22,7 @@ use battle_core::{
 use glam::Vec2;
 use rand::Rng;
 
-use super::{message::RunnerMessage, Runner};
+use super::{fight::choose::ChooseMethod, message::RunnerMessage, Runner};
 
 mod engage;
 mod fire;
@@ -43,6 +43,11 @@ impl Runner {
         puffin::profile_scope!("soldier_gesture");
         let mut messages = vec![];
 
+        // [수류탄 투척 제스처 락] 투척 딜레이 중에는 사격, 재장전 등 다른 제스처로 덮어씌워지지 않도록 차단합니다.
+        if let Gesture::Throwing(_, _) = soldier.gesture() {
+            return messages;
+        }
+
         let new_gesture = match soldier.behavior() {
             Behavior::Idle(_) => {
                 //
@@ -55,6 +60,22 @@ impl Runner {
             Behavior::EngageSoldier(soldier_index) => {
                 //
                 self.engage_soldier_gesture(soldier, soldier_index)
+            }
+            Behavior::MoveTo(_) | Behavior::MoveFastTo(_) => {
+                // [Part 3: 사격과 기동의 분리 (Move & Shoot)]
+                // 기동 중이더라도 적이 전방 시야(50m 이내)에 포착되면 이동을 멈추지 않고 걸어가며 지향 사격을 뿌립니다.
+                let mut result = GestureResult::Handled(GestureContext::Idle, Gesture::Idle);
+                if let Some(opponent) = self.soldier_find_opponent_to_target(soldier, None, &ChooseMethod::RandomFromNearest) {
+                    let point = opponent.world_point();
+                    let dist = distance_between_points(&soldier.world_point(), &point).meters();
+                    if dist <= 50 {
+                        if let Some(engagement) = self.soldier_able_to_fire_on_point(soldier, &point) {
+                            let (context, gesture) = self.engage_point_gesture(soldier, engagement);
+                            result = GestureResult::Handled(context, gesture);
+                        }
+                    }
+                }
+                result
             }
             _ => GestureResult::Handled(GestureContext::Idle, Gesture::Idle),
         };
@@ -190,23 +211,36 @@ impl Runner {
             })
             .collect();
 
+        let mut base_messages = vec![
+            RunnerMessage::BattleState(BattleStateMessage::Soldier(
+                soldier.uuid(),
+                SoldierMessage::WeaponShot(class.clone(), shot),
+            )),
+            RunnerMessage::BattleState(BattleStateMessage::PushCannonBlast(CannonBlast::new(
+                soldier.world_point(),
+                soldier.get_looking_direction(),
+                weapon.sprite_type(),
+                soldier.animation_type().0,
+            ))),
+            RunnerMessage::BattleState(BattleStateMessage::Soldier(
+                soldier.uuid(),
+                SoldierMessage::SetLastShootFrameI(*self.battle_state.frame_i()),
+            )),
+        ];
+
+        // [Part 1: 기동 간 제압(Suppression) 특화 보너스]
+        // 이동 중 사격은 명중률이 떨어지는 대신 화망을 형성하여 적의 스트레스를 높이는 데 특화되어 있습니다.
+        if matches!(soldier.behavior(), battle_core::behavior::Behavior::MoveTo(_) | battle_core::behavior::Behavior::MoveFastTo(_)) {
+            if let Some((target_idx, _)) = target {
+                base_messages.push(RunnerMessage::BattleState(BattleStateMessage::Soldier(
+                    *target_idx,
+                    SoldierMessage::IncreaseUnderFire(30), // 제압 보너스 직접 부여
+                )));
+            }
+        }
+
         [
-            vec![
-                RunnerMessage::BattleState(BattleStateMessage::Soldier(
-                    soldier.uuid(),
-                    SoldierMessage::WeaponShot(class.clone(), shot),
-                )),
-                RunnerMessage::BattleState(BattleStateMessage::PushCannonBlast(CannonBlast::new(
-                    soldier.world_point(),
-                    soldier.get_looking_direction(),
-                    weapon.sprite_type(),
-                    soldier.animation_type().0,
-                ))),
-                RunnerMessage::BattleState(BattleStateMessage::Soldier(
-                    soldier.uuid(),
-                    SoldierMessage::SetLastShootFrameI(*self.battle_state.frame_i()),
-                )),
-            ],
+            base_messages,
             bullet_fires,
         ]
         .concat()

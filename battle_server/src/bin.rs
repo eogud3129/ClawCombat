@@ -64,12 +64,21 @@ fn main() -> Result<(), Error> {
     let config = ServerConfig::default();
     let map = MapReader::new(map_name, &resources)?.build()?;
     let battle_state = BattleStateBuilder::new(map).build()?;
+    
+    // 추출된 Bonsai 모델 디렉터리 경로 지정
+    let llm_model_path = "./model/Bonsai-4B-Q1_0";
+    let embedding_model_path = "./model/klue";
+    let tactics_dir = "./resources/tactics";
+    
     let mut runner = Runner::new(
         config,
         server_input_receiver,
         server_output_sender,
         stop_required_,
         battle_state,
+        llm_model_path,
+        embedding_model_path,
+        tactics_dir,
     );
 
     runner.run()?;

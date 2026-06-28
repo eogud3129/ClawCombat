@@ -62,4 +62,11 @@ impl Interior {
     pub fn relative_height(&self) -> f32 {
         self.relative_height
     }
+
+    pub fn contains(&self, point: &crate::types::WorldPoint) -> bool {
+        point.x >= self.x
+            && point.x <= self.x + self.width
+            && point.y >= self.y
+            && point.y <= self.y + self.height
+    }
 }

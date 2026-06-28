@@ -130,12 +130,19 @@ impl EmbeddedServer {
             .name("runner".to_string())
             .spawn(|| {
                 println!("Start runner");
+                // 추출된 Bonsai 모델 디렉터리 경로 지정
+                let llm_model_path = "./model/Bonsai-4B-Q1_0";
+                let embedding_model_path = "./model/klue";
+                let tactics_dir = "./resources/tactics";
                 match Runner::new(
                     config,
                     runner_input_receiver,
                     runner_output_sender,
                     stop_required_,
                     state,
+                    llm_model_path,
+                    embedding_model_path,
+                    tactics_dir,
                 )
                 .run()
                 {

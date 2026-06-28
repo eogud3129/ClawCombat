@@ -95,6 +95,10 @@ impl Map {
         &self.interiors
     }
 
+    pub fn spawn_zones(&self) -> &Vec<SpawnZone> {
+        &self.spawn_zones
+    }
+
     pub fn width(&self) -> u32 {
         self.width
     }
@@ -137,6 +141,19 @@ impl Map {
             .iter()
             .find(|f| f.name() == flag_name)
             .expect("Flags ownership and map flag must be consistent")
+    }
+
+    pub fn get_interior_for_flag(&self, flag: &Flag) -> Option<&Interior> {
+        let center = flag.position();
+        self.interiors().iter().find(|i| i.contains(&center))
+    }
+
+    pub fn is_flag_in_interior(&self, flag: &Flag) -> bool {
+        self.get_interior_for_flag(flag).is_some()
+    }
+
+    pub fn interior_contains(&self, point: &WorldPoint) -> Option<&Interior> {
+        self.interiors().iter().find(|i| i.contains(point))
     }
 
     pub fn find_spawn_zones(&self, names: &[SpawnZoneName]) -> Vec<&SpawnZone> {

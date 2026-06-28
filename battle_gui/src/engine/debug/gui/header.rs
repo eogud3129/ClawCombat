@@ -31,6 +31,22 @@ impl Engine {
 
             ui.separator();
 
+            let mut yolo_mode_a = self.server_config.yolo_mode_a;
+            if ui.checkbox(&mut yolo_mode_a, "YOLO Mode A").changed() {
+                messages.push(EngineMessage::ChangeServerConfig(
+                    ChangeConfigMessage::YoloModeA(yolo_mode_a),
+                ));
+            }
+            
+            let mut yolo_mode_b = self.server_config.yolo_mode_b;
+            if ui.checkbox(&mut yolo_mode_b, "YOLO Mode B").changed() {
+                messages.push(EngineMessage::ChangeServerConfig(
+                    ChangeConfigMessage::YoloModeB(yolo_mode_b),
+                ));
+            }
+
+            ui.separator();
+
             ui.checkbox(&mut self.gui_state.debug_mouse, "Cursor");
             ui.checkbox(&mut self.gui_state.debug_move_paths, "Move");
             if ui
@@ -46,8 +62,30 @@ impl Engine {
             ui.checkbox(&mut self.gui_state.debug_visibilities, "Visibilities");
             ui.checkbox(&mut self.gui_state.debug_targets, "Targets");
             ui.checkbox(&mut self.gui_state.debug_physics_areas, "Physics");
+            ui.checkbox(&mut self.gui_state.debug_grid, "Grid");
 
             ui.label(format!("FPS : {:.2}", ctx.time.fps()));
+        });
+
+        ui.separator();
+
+        ui.horizontal(|ui| {
+            ui.label("Game Speed:");
+            for speed in 1..=5 {
+                if ui.button(format!("{}X", speed)).clicked() {
+                    let speed_f32 = speed as f32;
+                    messages.push(EngineMessage::ChangeServerConfig(ChangeConfigMessage::GameSpeed(speed_f32)));
+                    self.config.target_fps = (battle_core::config::TARGET_FPS as f32 * speed_f32) as u32;
+                }
+            }
+
+            ui.separator();
+
+            ui.label("Global Volume:");
+            ui.add(ggegui::egui::Slider::new(&mut self.config.global_volume, 0.0..=1.0));
+            if ui.button("Reset").clicked() {
+                self.config.global_volume = 0.2;
+            }
         });
 
         ui.separator();

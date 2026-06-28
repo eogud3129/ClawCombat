@@ -31,6 +31,8 @@ pub enum EngineMessage {
     UpdateInteriors,
     SwitchDecorDisplay,
     Exit,
+    SendChatCommand(String),
+    RequestTacticSuggestions(String),
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -63,4 +65,10 @@ pub enum GuiStateMessage {
     SetSavesList(Vec<PathBuf>),
     CenterSceneOn(WorldPoint),
     SetFullscreenMode(bool),
+    ToggleChatGui, // [추가] Tab 키 입력을 통해 채팅창 표시 여부를 전환하는 메시지 유형
+    SetAvailableTemplates(Vec<String>),
+    SelectTemplate(Option<String>),
+    SetTacticSuggestions(Vec<(String, String, f32)>),
+    AddChatTask(String, Vec<SquadUuid>),
+    RemoveChatTask(usize),
 }

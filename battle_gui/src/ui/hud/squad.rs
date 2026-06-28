@@ -132,6 +132,37 @@ impl Component<HudEvent> for SquadStatuses {
         let mut mesh_builder = MeshBuilder::new();
 
         for draw_card in self.cards(ctx) {
+            let outline = Rect::new(
+                draw_card.dest.x,
+                draw_card.dest.y,
+                SQUAD_CARD_WIDTH,
+                SQUAD_CARD_HEIGHT,
+            );
+
+            // [작전 진행 중 하이라이트] 분대장이 이동 또는 공격 중인지 확인하여 형광 컬러를 칠합니다. (정찰조 및 프롬프트 명령 수행 분대 공통 적용)
+            let mut is_active = false;
+            for member in draw_card.squad_status.members() {
+                if member.leader() {
+                    is_active = matches!(
+                        member.current(),
+                        battle_core::game::squad::CurrentAction::Walking
+                            | battle_core::game::squad::CurrentAction::Running
+                            | battle_core::game::squad::CurrentAction::Crawling
+                            | battle_core::game::squad::CurrentAction::TargetFiring
+                            | battle_core::game::squad::CurrentAction::SuppressFiring
+                    );
+                    break;
+                }
+            }
+
+            if is_active {
+                mesh_builder.rectangle(
+                    DrawMode::Fill(FillOptions::default()),
+                    outline,
+                    Color::new(0.0, 1.0, 0.0, 0.25), // 형광 초록 투명 배경
+                )?;
+            }
+
             // Health color
             mesh_builder.rectangle(
                 DrawMode::Fill(FillOptions::default()),
@@ -187,12 +218,6 @@ impl Component<HudEvent> for SquadStatuses {
             }
 
             // Outline when hover or selected
-            let outline = Rect::new(
-                draw_card.dest.x,
-                draw_card.dest.y,
-                SQUAD_CARD_WIDTH,
-                SQUAD_CARD_HEIGHT,
-            );
             if outline.contains(hovered.to_vec2())
                 || self
                     .selected_squads

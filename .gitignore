@@ -1,3 +1,7 @@
 /target
+/model
+prd.md
 .idea
 *~
+*.gguf
+*.bin

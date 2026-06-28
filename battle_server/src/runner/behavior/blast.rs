@@ -26,9 +26,16 @@ impl Runner {
         soldier_index: SoldierIndex,
         distance: Distance,
     ) -> Vec<RunnerMessage> {
-        vec![RunnerMessage::BattleState(BattleStateMessage::Soldier(
-            soldier_index,
-            SoldierMessage::IncreaseUnderFire(Feeling::blast_increase_value(distance)),
-        ))]
+        let frame_i = *self.battle_state.frame_i();
+        vec![
+            RunnerMessage::BattleState(BattleStateMessage::Soldier(
+                soldier_index,
+                SoldierMessage::IncreaseUnderFire(Feeling::blast_increase_value(distance)),
+            )),
+            RunnerMessage::BattleState(BattleStateMessage::Soldier(
+                soldier_index,
+                SoldierMessage::SetLastShotFrameI(frame_i + 75),
+            )),
+        ]
     }
 }

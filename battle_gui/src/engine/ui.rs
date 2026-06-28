@@ -316,9 +316,32 @@ impl Engine {
                         ])
                         // Display a squad menu if squad under cursor or selected squad
                     } else if !squad_ids.is_empty() {
-                        messages.push(EngineMessage::GuiState(GuiStateMessage::SetSquadMenu(
-                            Some((*self.gui_state.current_cursor_window_point(), squad_ids)),
-                        )));
+                        // Grid 모드 켜져있을 때 우클릭 시 큰 이동 대신 클릭한 방향으로 미세 강제 이동 오더 주입
+                        if self.gui_state.debug_grid {
+                            let squad_id = squad_ids[0];
+                            let squad_leader = self.battle_state.squad(squad_id).leader();
+                            let leader_pos = self.battle_state.soldier(squad_leader).world_point();
+                            
+                            let dir = world_point.to_vec2() - leader_pos.to_vec2();
+                            let dist = dir.length();
+                            
+                            // 너무 한 번에 멀리 가지 않도록 최대 20.0 유닛 거리로 보정 연산 수행
+                            let target_point = if dist > 20.0 {
+                                WorldPoint::from_vec2(leader_pos.to_vec2() + dir.normalize() * 20.0)
+                            } else {
+                                world_point
+                            };
+
+                            let paths = WorldPaths::new(vec![WorldPath::new(vec![leader_pos, target_point])]);
+                            let order = Order::MoveTo(paths, None);
+                            
+                            messages.extend(self.define_order(&squad_leader, &order));
+                            messages.push(EngineMessage::PlaySound(Sound::Clac1));
+                        } else {
+                            messages.push(EngineMessage::GuiState(GuiStateMessage::SetSquadMenu(
+                                Some((*self.gui_state.current_cursor_window_point(), squad_ids)),
+                            )));
+                        }
                     } else {
                         messages.push(EngineMessage::GuiState(GuiStateMessage::CenterSceneOn(
                             world_point,

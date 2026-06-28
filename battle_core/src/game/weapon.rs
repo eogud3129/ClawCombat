@@ -554,13 +554,10 @@ impl Weapon {
 
     pub fn shot_type(&self, opponents_count: usize) -> Shot {
         match self {
-            Weapon::MosinNagantM1924(_, magazine) | Weapon::MauserG41(_, magazine) => {
-                if magazine.is_some() {
-                    Shot::x1
-                } else {
-                    eprintln!("Tried to determine shot on weapon without magazine");
-                    Shot::x1
-                }
+            Weapon::MosinNagantM1924(_, _) | Weapon::MauserG41(_, _) => {
+                // [Part 2: 볼트액션 소총 빈 탄창 사격 에러 해결]
+                // 약실에 총알이 장전되어 있다면(ready_bullet == true), 탄창이 빠져있어도 1발 사격이 가능하므로 에러 로그를 띄우지 않습니다.
+                Shot::x1
             }
             Weapon::BrenMark2(magazine) | Weapon::Mg34(magazine) => {
                 if let Some(magazine) = magazine {

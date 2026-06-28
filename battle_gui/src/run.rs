@@ -199,8 +199,11 @@ pub fn run(
         )?;
     }
 
+    // GraphicsInitializationError 방지를 위해 그래픽스 백엔드를 Vulkan으로 설정합니다.
     let mut context_builder =
-        ggez::ContextBuilder::new("Open Combat", "Bastien Sevajol").window_mode(windowed_mode());
+        ggez::ContextBuilder::new("Open Combat", "Bastien Sevajol")
+            .window_mode(windowed_mode())
+            .backend(ggez::conf::Backend::Vulkan);
     for resource_path in resources.resources_paths_abs() {
         context_builder = context_builder.add_resource_path(resource_path);
     }

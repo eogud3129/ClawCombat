@@ -421,6 +421,10 @@ impl SquadComposition {
         &self.2
     }
 
+    pub fn members_mut(&mut self) -> &mut Vec<SoldierIndex> {
+        &mut self.2
+    }
+
     pub fn subordinates(&self) -> Vec<&SoldierIndex> {
         self.2.iter().filter(|i| i != &&self.0).collect()
     }

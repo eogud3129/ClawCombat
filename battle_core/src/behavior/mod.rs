@@ -51,12 +51,15 @@ pub enum Behavior {
     Idle(Body),
     Defend(Angle),
     Hide(Angle),
+    ScatterToCover(Angle),
+    GatherToCover(Angle),
     //
     Dead,
     Unconscious,
     // Combat
     SuppressFire(WorldPoint),
     EngageSoldier(SoldierIndex),
+    OffMapTransit(u64),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -81,6 +84,7 @@ impl Behavior {
             Order::SneakTo(path, _) => Behavior::SneakTo(path.clone()),
             Order::Defend(angle) => Behavior::Defend(*angle),
             Order::Hide(angle) => Behavior::Hide(*angle),
+            Order::OffMapTransit(frame) => Behavior::OffMapTransit(*frame),
             // default_behavior should never be called for EngageSquad & SuppressFire
             Order::EngageSquad(_squad_id) => unreachable!(),
             Order::SuppressFire(_point) => unreachable!(),
@@ -90,17 +94,19 @@ impl Behavior {
     pub fn propagation(&self) -> BehaviorPropagation {
         match self {
             Behavior::MoveTo(_) | Behavior::MoveFastTo(_) | Behavior::SneakTo(_) => {
-                BehaviorPropagation::Regularly
+                BehaviorPropagation::OnChange
             }
             Behavior::DriveTo(_) => BehaviorPropagation::Never,
             Behavior::RotateTo(_) => BehaviorPropagation::Never,
             Behavior::Idle(_) => BehaviorPropagation::OnChange,
             Behavior::Defend(_) => BehaviorPropagation::OnChange,
             Behavior::Hide(_) => BehaviorPropagation::OnChange,
+            Behavior::ScatterToCover(_) | Behavior::GatherToCover(_) => BehaviorPropagation::OnChange,
             Behavior::SuppressFire(_) => BehaviorPropagation::OnChange,
             Behavior::Dead => BehaviorPropagation::Never,
             Behavior::Unconscious => BehaviorPropagation::Never,
             Behavior::EngageSoldier(_) => BehaviorPropagation::OnChange,
+            Behavior::OffMapTransit(_) => BehaviorPropagation::OnChange,
         }
     }
 
@@ -118,12 +124,14 @@ impl Behavior {
                     return true;
                 }
             }
-            Behavior::Idle(_) | Behavior::Defend(_) | Behavior::Hide(_) | Behavior::RotateTo(_) => {
+            Behavior::Idle(_) | Behavior::Defend(_) | Behavior::Hide(_) | Behavior::RotateTo(_) 
+            | Behavior::ScatterToCover(_) | Behavior::GatherToCover(_) => {
             }
             Behavior::Dead => {}
             Behavior::Unconscious => {}
             Behavior::SuppressFire(_) => {}
             Behavior::EngageSoldier(_) => {}
+            Behavior::OffMapTransit(_) => {}
         }
 
         false
@@ -139,10 +147,13 @@ impl Behavior {
             | Behavior::Idle(_)
             | Behavior::Defend(_)
             | Behavior::Hide(_)
+            | Behavior::ScatterToCover(_)
+            | Behavior::GatherToCover(_)
             | Behavior::Dead
             | Behavior::Unconscious
             | Behavior::SuppressFire(_)
-            | Behavior::EngageSoldier(_) => None,
+            | Behavior::EngageSoldier(_)
+            | Behavior::OffMapTransit(_) => None,
         }
     }
 
@@ -150,12 +161,14 @@ impl Behavior {
         // TODO : posture can be different on same behavior (like with SuppressFire, EngageSoldier)
         // FIXME: Clarify which usage with `Body` !!
         match self {
-            Behavior::MoveTo(_) | Behavior::MoveFastTo(_) | Behavior::Idle(_) => Posture::StandUp,
+            Behavior::MoveTo(_) | Behavior::MoveFastTo(_) | Behavior::Idle(_) | Behavior::OffMapTransit(_) => Posture::StandUp,
             Behavior::Defend(_)
             | Behavior::SneakTo(_)
             | Behavior::DriveTo(_)
             | Behavior::RotateTo(_)
             | Behavior::Hide(_)
+            | Behavior::ScatterToCover(_)
+            | Behavior::GatherToCover(_)
             | Behavior::Dead
             | Behavior::Unconscious
             | Behavior::SuppressFire(_)
@@ -164,7 +177,7 @@ impl Behavior {
     }
 
     pub fn is_hide(&self) -> bool {
-        matches!(self, Behavior::Hide(_))
+        matches!(self, Behavior::Hide(_) | Behavior::ScatterToCover(_) | Behavior::GatherToCover(_))
     }
 
     pub fn opponent(&self) -> Option<&SoldierIndex> {
@@ -195,10 +208,13 @@ impl Display for Behavior {
             Behavior::Idle(position) => f.write_str(&format!("Idle {}", position)),
             Behavior::Defend(_) => f.write_str("Defend"),
             Behavior::Hide(_) => f.write_str("Hide"),
+            Behavior::ScatterToCover(_) => f.write_str("ScatterToCover"),
+            Behavior::GatherToCover(_) => f.write_str("GatherToCover"),
             Behavior::Dead => f.write_str("Dead"),
             Behavior::Unconscious => f.write_str("Unconscious"),
             Behavior::SuppressFire(_) => f.write_str("SuppressFire"),
             Behavior::EngageSoldier(_) => f.write_str("EngageSquad"),
+            Behavior::OffMapTransit(_) => f.write_str("OffMapTransit"),
         }
     }
 }

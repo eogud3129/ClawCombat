@@ -11,6 +11,7 @@ use battle_core::{
 use ggez::{Context, GameResult};
 
 use super::Engine;
+use crate::engine::message::GuiStateMessage;
 
 impl Engine {
     pub fn sync(&mut self, ctx: &mut Context) -> GameResult {
@@ -63,10 +64,10 @@ impl Engine {
                                 })
                             }
                             ClientStateMessage::PlayInterfaceSound(sound) => {
-                                self.player.play(sound, ctx)?
+                                self.player.play(sound, self.config.global_volume, ctx)?
                             }
                             ClientStateMessage::PlayBattleSound(sound) => {
-                                self.player.play(sound, ctx)?
+                                self.player.play(sound, self.config.global_volume, ctx)?
                             }
                             ClientStateMessage::BattleStarted => {
                                 self.graphics.battle_started(ctx, self.battle_state.map())?;
@@ -75,6 +76,9 @@ impl Engine {
                     }
                     OutputMessage::ChangeConfig(change_config) => {
                         self.server_config.react(change_config);
+                    }
+                    OutputMessage::TacticSuggestions(suggestions) => {
+                        self.gui_state.react(&GuiStateMessage::SetTacticSuggestions(suggestions.clone()), ctx);
                     }
                 }
             }

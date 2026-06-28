@@ -97,6 +97,7 @@ pub enum Order {
     Hide(Angle),
     EngageSquad(SquadUuid),
     SuppressFire(WorldPoint),
+    OffMapTransit(u64),
 }
 
 impl Order {
@@ -109,7 +110,7 @@ impl Order {
             Order::Hide(_) => Some(OrderMarker::Hide),
             Order::EngageSquad(_) => Some(OrderMarker::EngageSquad),
             Order::SuppressFire(_) => Some(OrderMarker::SuppressFire),
-            Order::Idle => None,
+            Order::Idle | Order::OffMapTransit(_) => None,
         }
     }
 
@@ -120,16 +121,18 @@ impl Order {
             Order::Hide(angle) => Some(*angle),
             Order::SuppressFire(_) => None,
             Order::EngageSquad(_) => None,
-            Order::Idle => None,
+            Order::Idle | Order::OffMapTransit(_) => None,
         }
     }
 
     pub fn reach_step(&mut self) -> bool {
         match self {
             Order::MoveTo(paths, _) | Order::MoveFastTo(paths, _) | Order::SneakTo(paths, _) => {
-                paths
-                    .remove_next_point()
-                    .expect("Reach a move behavior implies containing point");
+                if paths.next_point().is_none() {
+                    return true;
+                }
+                
+                paths.remove_next_point();
 
                 if paths.next_point().is_none() {
                     return true;
@@ -140,6 +143,7 @@ impl Order {
             Order::Idle => {}
             Order::EngageSquad(_) => {}
             Order::SuppressFire(_) => {}
+            Order::OffMapTransit(_) => {}
         }
 
         false
@@ -168,6 +172,7 @@ impl Display for Order {
             Order::Idle => f.write_str("Idle"),
             Order::EngageSquad(_) => f.write_str("Engage"),
             Order::SuppressFire(_) => f.write_str("SuppressFire"),
+            Order::OffMapTransit(_) => f.write_str("OffMapTransit"),
         }
     }
 }

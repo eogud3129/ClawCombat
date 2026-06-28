@@ -49,6 +49,12 @@ impl<'a> CoverFinder<'a> {
         let mut already_used_cover_grid_points: Vec<GridPoint> = self.exclude_grid_points.clone();
         let mut debug_points = vec![];
 
+        // [버그 수정: 단일 생존자 엄폐 연산 시 가중치 오염 전파 차단]
+        let alive_members_count = squad.members().iter().filter(|m| m.0 < self.battle_state.soldiers().len() && self.battle_state.soldier(**m).alive()).count();
+        if alive_members_count <= 1 {
+            return (moves, debug_points);
+        }
+
         for (member_id, formation_position) in
             squad_positions(squad, Formation::Line, leader, self.point)
         {
@@ -84,6 +90,114 @@ impl<'a> CoverFinder<'a> {
                 already_used_cover_grid_points.push(cover_grid_point);
 
                 moves.push((member_id, from_world_point, cover_world_point));
+            }
+        }
+
+        (moves, debug_points)
+    }
+
+    pub fn find_scatter_cover_points(
+        &self,
+        squad: &SquadComposition,
+        leader: &Soldier,
+    ) -> (
+        Vec<(SoldierIndex, WorldPoint, WorldPoint)>,
+        Vec<NewDebugPoint>,
+    ) {
+        let mut moves = vec![];
+        let mut already_used_cover_grid_points: Vec<GridPoint> = self.exclude_grid_points.clone();
+        let mut debug_points = vec![];
+
+        // [버그 수정: 단일 생존자 산개 연산 시 가중치 오염 전파 차단]
+        let alive_members_count = squad.members().iter().filter(|m| m.0 < self.battle_state.soldiers().len() && self.battle_state.soldier(**m).alive()).count();
+        if alive_members_count <= 1 {
+            return (moves, debug_points);
+        }
+
+        // 흩어질 때는 탐색 반경을 넓힘 (기본 COVER_DISTANCE의 3배)
+        let scatter_distance = COVER_DISTANCE * 3;
+
+        for (member_id, formation_position) in
+            squad_positions(squad, Formation::Line, leader, self.point)
+        {
+            let soldier = self.battle_state.soldier(member_id);
+            let grid_point = self
+                .battle_state
+                .map()
+                .grid_point_from_world_point(&formation_position);
+                
+            if let Some((cover_grid_point, debug_grid_points)) = find_arbitrary_cover_grid_point(
+                self.config,
+                &grid_point,
+                self.battle_state.map(),
+                &already_used_cover_grid_points,
+                scatter_distance,
+            ) {
+                if self.config.send_debug_points {
+                    for debug_grid_point in debug_grid_points.iter() {
+                        debug_points.push(NewDebugPoint {
+                            point: self
+                                .battle_state
+                                .map()
+                                .world_point_from_grid_point(*debug_grid_point),
+                            color: (0, 0, 255, 255),
+                        })
+                    }
+                }
+
+                let from_world_point = soldier.world_point();
+                let cover_world_point = self
+                    .battle_state
+                    .map()
+                    .world_point_from_grid_point(cover_grid_point);
+                already_used_cover_grid_points.push(cover_grid_point);
+
+                moves.push((member_id, from_world_point, cover_world_point));
+            }
+        }
+
+        (moves, debug_points)
+    }
+
+    pub fn find_gather_cover_points(
+        &self,
+        squad: &SquadComposition,
+        leader: &Soldier,
+    ) -> (
+        Vec<(SoldierIndex, WorldPoint, WorldPoint)>,
+        Vec<NewDebugPoint>,
+    ) {
+        let mut moves = vec![];
+        let mut debug_points = vec![];
+
+        let leader_grid_point = self.battle_state.map().grid_point_from_world_point(&leader.world_point());
+        
+        // 지휘관 근처의 가장 좋은 엄폐물 1개만 탐색
+        if let Some((target_cover_grid_point, debug_grid_points)) = find_arbitrary_cover_grid_point(
+            self.config,
+            &leader_grid_point,
+            self.battle_state.map(),
+            &self.exclude_grid_points,
+            COVER_DISTANCE,
+        ) {
+            if self.config.send_debug_points {
+                for debug_grid_point in debug_grid_points.iter() {
+                    debug_points.push(NewDebugPoint {
+                        point: self
+                            .battle_state
+                            .map()
+                            .world_point_from_grid_point(*debug_grid_point),
+                        color: (0, 0, 255, 255),
+                    })
+                }
+            }
+
+            let target_cover_world_point = self.battle_state.map().world_point_from_grid_point(target_cover_grid_point);
+            
+            // 모든 분대원에게 동일한 타겟 엄폐물 지점 부여 (한곳으로 뭉치기)
+            for member_id in squad.members() {
+                let soldier = self.battle_state.soldier(*member_id);
+                moves.push((*member_id, soldier.world_point(), target_cover_world_point));
             }
         }
 
