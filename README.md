@@ -34,10 +34,7 @@ Server must already been started
 # Reference License
 This project integrates and extends the following open-source works:
 
-[Game Engine](https://github.com/buxx/opencombat) - AGPL-3.0
-
-[Inference Engine](https://github.com/ruihe774/bonsai-pot) - Unlicense
-
-[Inference Model](https://huggingface.co/prism-ml/Bonsai-4B-gguf) - Apache-2.0
-
-[Embedding Model](https://huggingface.co/kekeappa/kor-static-embedding-512) - Apache-2.0
+- [Game Engine](https://github.com/buxx/opencombat) - AGPL-3.0
+- [Inference Engine](https://github.com/ruihe774/bonsai-pot) - Unlicense
+- [Inference Model](https://huggingface.co/prism-ml/Bonsai-4B-gguf) - Apache-2.0
+- [Embedding Model](https://huggingface.co/kekeappa/kor-static-embedding-512) - Apache-2.0
