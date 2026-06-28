@@ -3,12 +3,6 @@
 
 # OpenCombat
 
-![Testing workflow](https://github.com/buxx/OpenCombat/actions/workflows/test.yml/badge.svg)
-
-[![Preview video](preview2.png)](https://youtu.be/_N6HLZEDKPk)
-
-Open source close combat inspired game. Presentation available [here](http://www.closecombatseries.net/CCS/modules.php?name=Forums&file=viewtopic&t=11696)
-
 ## Development
 
 ### Requirements
@@ -34,17 +28,3 @@ Server must already been started
 #### Gui with embedded server
 
     cargo run --bin battle_gui --release -- Demo1 assets/demo1_deployment.json --embedded-server --server-rep-address tcp://0.0.0.0:4255 --server-bind-address tcp://0.0.0.0:4256 --side a --side-a-control N --side-a-control NW --side-a-control W --side-b-control ALL
-
-### Profile
-
-Install [puffin_viewer](https://github.com/EmbarkStudios/puffin/tree/main/puffin_viewer) :
-
-    cargo install puffin_viewer
-
-Start server or client with `--profile` flag. Example :
-
-    cargo run --bin battle_gui --  map1 assets/map1_deployment.json --embedded-server --server-rep-address tcp://0.0.0.0:4255 --server-bind-address tcp://0.0.0.0:4256 --side a --side-a-control W --side-a-control NW --side-a-control SW --side-b-control ALL --profile
-
-Output will be like :
-
-![Puffin viewer](puffin_viewer.png)
