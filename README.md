@@ -29,6 +29,8 @@ Server must already been started
 
     cargo run --bin battle_gui --release -- Demo1 assets/demo1_deployment.json --embedded-server --server-rep-address tcp://127.0.0.1:4255 --server-bind-address tcp://127.0.0.1:4256 --side a --side-a-control N --side-a-control NW --side-a-control W --side-b-control ALL
 
+-----
+
 ## mecab-ko-dict 설치방법
 
 ### 1. Rust 전용 사전 빌더 설치
@@ -43,6 +45,7 @@ tar.exe -xzf mecab-ko-dic-2.1.1-20180720.tar.gz
 ###  4. Rust 전용 바이너리 사전으로 변환 빌드! (model 폴더 하위에 mecab-ko-dic-rust 폴더로 생성)
 mecab-ko-dict-builder build --input mecab-ko-dic-2.1.1-20180720 --output ./model/mecab-ko-dic-rust
 
+-----
 
 ### Roadmap
 
@@ -53,6 +56,7 @@ mecab-ko-dict-builder build --input mecab-ko-dic-2.1.1-20180720 --output ./model
 - 프롬프트 입력시 자동완성으로 각 분대별 상황에 적합한 커스텀 매뉴얼(.md) 불러오기
 - 다국어 NLP 가능한 모델 찾고, 싱글 페어 반영
 
+-----
 
 # Reference License
 This project integrates and extends the following open-source works:
