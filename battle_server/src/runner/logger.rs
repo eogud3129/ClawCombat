@@ -32,7 +32,21 @@ pub struct BattleLogger {
     
     // [추가] 전술 명령(Order) 추적용
     order_counter: usize,
-    squad_pages: HashSet<usize>, // 이미 생성된 분대 페이지 추적
+    squad_pages: HashSet<String>, // 이미 생성된 분대 페이지 링크 추적
+    squad_sides: HashMap<usize, Side>, // 분대(병사)별 진영(Side) 저장
+}
+
+fn format_squad(squad_id: usize, side: Side) -> String {
+    format!("{}_Squad_{}", side, squad_id)
+}
+
+fn format_squad_link(squad_id: usize, side: Side) -> String {
+    let color = match side {
+        Side::A => "#4b8bdf", // 파란색
+        Side::B => "#df4b4b", // 빨간색
+        _ => "gray",
+    };
+    format!("<span style=\"color:{}\">[[{}_Squad_{}]]</span>", color, side, squad_id)
 }
 
 impl BattleLogger {
@@ -65,10 +79,11 @@ impl BattleLogger {
             total_ammo_b: 0,
             order_counter: 0,
             squad_pages: HashSet::new(),
+            squad_sides: HashMap::new(),
         };
         
         logger.init_index();
-        logger.init_phase_dir();
+        logger.init_obsidian_settings();
         logger
     }
 
@@ -80,6 +95,35 @@ impl BattleLogger {
         }
     }
 
+    fn init_obsidian_settings(&self) {
+        let obsidian_dir = self.base_dir.join(".obsidian");
+        let _ = fs::create_dir_all(&obsidian_dir);
+        
+        // 그래프 뷰 노드 자동 컬러링을 위한 graph.json 환경 파일 생성
+        let graph_json_path = obsidian_dir.join("graph.json");
+        if !graph_json_path.exists() {
+            let graph_json_content = r#"{
+  "colorGroups": [
+    {
+      "query": "tag:#Side_A OR file:A_",
+      "color": {
+        "a": 1.0,
+        "rgb": 4951007
+      }
+    },
+    {
+      "query": "tag:#Side_B OR file:B_",
+      "color": {
+        "a": 1.0,
+        "rgb": 14633803
+      }
+    }
+  ]
+}"#;
+            let _ = fs::write(graph_json_path, graph_json_content);
+        }
+    }
+
     fn append_to_index(&self, text: &str) {
         let index_path = self.base_dir.join("index.md");
         if let Ok(mut file) = OpenOptions::new().append(true).create(true).open(&index_path) {
@@ -87,12 +131,8 @@ impl BattleLogger {
         }
     }
 
-    fn init_phase_dir(&self) {
-        let phase_dir = self.base_dir.join(format!("phase_{}", self.current_phase));
-        fs::create_dir_all(&phase_dir).unwrap_or_else(|e| eprintln!("Failed to create phase dir: {}", e));
-    }
-
-    pub fn log_movement(&mut self, frame: u64, soldier: SoldierIndex, from_sector: String, to_sector: String, terrain: &str, is_indoor: bool, dist_m: f32, posture: &str) {
+    pub fn log_movement(&mut self, frame: u64, side: Side, soldier: SoldierIndex, from_sector: String, to_sector: String, terrain: &str, is_indoor: bool, dist_m: f32, posture: &str) {
+        self.squad_sides.insert(soldier.0, side);
         // 섹터 출력 여부와 상관없이 실제 병사가 이동한 미세 거리는 매 타일 이동마다 계속 누적 합산합니다.
         let current_dist = self.movement_distances.entry(soldier.0).or_insert(0.0);
         *current_dist += dist_m;
@@ -105,7 +145,7 @@ impl BattleLogger {
             } else {
                 "N/A".to_string()
             };
-            let squad_link = format!("[[Squad_{}]]", soldier.0);
+            let squad_link = format_squad_link(soldier.0, side);
             
             // [개선] Order 및 Squad 위키링크 추가
             let entry = format!(
@@ -117,7 +157,7 @@ impl BattleLogger {
             // [개선] 해당 분대 페이지에도 동일 로그 추가 (양방향 링크)
             let squad_file = self.base_dir
                 .join("squads")
-                .join(format!("Squad_{}.md", soldier.0));
+                .join(format!("{}.md", format_squad(soldier.0, side)));
             
             if let Ok(mut file) = OpenOptions::new().append(true).create(true).open(&squad_file) {
                 writeln!(file, "{}", entry).unwrap_or_default();
@@ -125,15 +165,18 @@ impl BattleLogger {
         }
     }
 
-    pub fn log_engagement(&mut self, frame: u64, soldier: SoldierIndex, target_squad: usize, target_grid: GridPoint, target_sector: &str, target_count: usize, target_terrain: &str, target_is_indoor: bool, posture: &str, threat_score: f32) {
+    pub fn log_engagement(&mut self, frame: u64, side: Side, soldier: SoldierIndex, target_side: Side, target_squad: usize, target_grid: GridPoint, target_sector: &str, target_count: usize, target_terrain: &str, target_is_indoor: bool, posture: &str, threat_score: f32) {
+        self.squad_sides.insert(soldier.0, side);
+        self.squad_sides.insert(target_squad, target_side);
+
         let env_str = if target_is_indoor { "실내" } else { "실외" };
         let order_link = if let Some(order_id) = self.current_order_id {
             format!("[[Order_{}]]", order_id)
         } else {
             "N/A".to_string()
         };
-        let squad_link = format!("[[Squad_{}]]", soldier.0);
-        let target_squad_link = format!("[[Squad_{}]]", target_squad);
+        let squad_link = format_squad_link(soldier.0, side);
+        let target_squad_link = format_squad_link(target_squad, target_side);
         
         // [개선] Order 및 양측 분대 위키링크 추가 (교전 관계 명시)
         let entry = format!(
@@ -146,7 +189,7 @@ impl BattleLogger {
         // [개선] 공격자 분대 페이지에 교전 기록 추가
         let attacker_squad_file = self.base_dir
             .join("squads")
-            .join(format!("Squad_{}.md", soldier.0));
+            .join(format!("{}.md", format_squad(soldier.0, side)));
         
         if let Ok(mut file) = OpenOptions::new().append(true).create(true).open(&attacker_squad_file) {
             writeln!(file, "{}", entry).unwrap_or_default();
@@ -155,10 +198,10 @@ impl BattleLogger {
         // [개선] 피공격자 분대 페이지에도 교전 기록 추가 (양방향)
         let defender_squad_file = self.base_dir
             .join("squads")
-            .join(format!("Squad_{}.md", target_squad));
+            .join(format!("{}.md", format_squad(target_squad, target_side)));
         
         // 피공격자 분대 페이지가 없으면 생성
-        self.ensure_squad_page(target_squad);
+        self.ensure_squad_page(target_squad, target_side);
         
         if let Ok(mut file) = OpenOptions::new().append(true).create(true).open(&defender_squad_file) {
             let defender_entry = format!(
@@ -171,7 +214,8 @@ impl BattleLogger {
 
     pub fn log_death(&mut self, frame: u64, side: Side, soldier: SoldierIndex, dead_grid: GridPoint, dead_sector: &str, dead_terrain: &str, dead_is_indoor: bool, cause: &str) {
         let env_str = if dead_is_indoor { "실내" } else { "실외" };
-        let entry = format!("- [Frame {}] 병사 {} 사망 | 위치: {} (섹터: {}) (지형: {}, 환경: {}) | 원인: {}", frame, soldier.0, dead_grid, dead_sector, dead_terrain, env_str, cause);
+        let squad_link = format_squad_link(soldier.0, side);
+        let entry = format!("- [Frame {}] 병사 {} 사망 | 위치: {} (섹터: {}) (지형: {}, 환경: {}) | 원인: {}", frame, squad_link, dead_grid, dead_sector, dead_terrain, env_str, cause);
         match side {
             Side::A => {
                 self.deaths_a.push(entry);
@@ -204,9 +248,6 @@ impl BattleLogger {
         let phase_file = self.base_dir
             .join("phases")
             .join(format!("Phase_{}.md", self.current_phase));
-        let summary_file = self.base_dir
-            .join("phases")
-            .join(format!("Summary_{}.md", self.current_phase));
         let index_path = self.base_dir.join("index.md");
         
         let current_phase = self.current_phase;
@@ -221,43 +262,54 @@ impl BattleLogger {
         let deaths_b = self.deaths_b.clone();
         let ammo_a = self.ammo_a;
         let ammo_b = self.ammo_b;
+        let squad_sides = self.squad_sides.clone();
 
         // 대량의 마크다운 문자열 조합 및 디스크 I/O 연산 전체를 백그라운드 스레드로 격리하여 프리징을 차단합니다.
         thread::spawn(move || {
             let mut content = String::new();
-            // [개선] 프론트매터 강화 (연관 Phase, Squad, Order 링크 포함)
-            let mut squads_in_phase: Vec<String> = movements.keys()
+            
+            // Frontmatter 전용 깨끗한 위키링크 배열 (HTML 제외)
+            let mut squads_in_phase_fm: Vec<String> = movements.keys()
                 .chain(engagements.keys())
-                .map(|s| format!("[[Squad_{}]]", s))
+                .map(|s| {
+                    let s_side = squad_sides.get(s).unwrap_or(&Side::All);
+                    format!("\"[[{}]]\"", format_squad(*s, *s_side))
+                })
                 .collect::<HashSet<_>>()
                 .into_iter()
                 .collect();
-            squads_in_phase.sort();
-            let squads_str = squads_in_phase.join(", ");
+            squads_in_phase_fm.sort();
+            let squads_fm_str = squads_in_phase_fm.join(", ");
+
+            // 마크다운 바디(Body)용 HTML 태그 포함 색상 링크 배열
+            let mut squads_in_phase_body: Vec<String> = movements.keys()
+                .chain(engagements.keys())
+                .map(|s| {
+                    let s_side = squad_sides.get(s).unwrap_or(&Side::All);
+                    format_squad_link(*s, *s_side)
+                })
+                .collect::<HashSet<_>>()
+                .into_iter()
+                .collect();
+            squads_in_phase_body.sort();
+            let squads_body_str = squads_in_phase_body.join(", ");
             
             content.push_str("---\n");
             content.push_str(&format!("phase: {}\n", current_phase));
             content.push_str(&format!("start_frame: {}\n", start_time));
             content.push_str(&format!("end_frame: {}\n", end_frame));
             content.push_str(&format!("trigger_event: \"{}\"\n", trigger_string));
-            content.push_str(&format!("squads: [{}]\n", squads_str));
+            content.push_str(&format!("squads: [{}]\n", squads_fm_str));
             content.push_str("---\n\n");
-
-            let mut summary_content = content.clone();
 
             content.push_str(format!("# Phase {}\n\n", current_phase).as_str());
             content.push_str("[[../index|상위 디렉토리(Index)로 돌아가기]]\n\n");
-            content.push_str(&format!("## 참여 분대\n{}\n\n", squads_str));
-
-            summary_content.push_str(format!("# Summary Phase {}\n\n", current_phase).as_str());
-            summary_content.push_str("[[../index|상위 디렉토리(Index)로 돌아가기]]\n\n");
+            content.push_str(&format!("## 참여 분대\n{}\n\n", squads_body_str));
 
             content.push_str("## 지휘관 동선 및 교전 기록\n");
-            summary_content.push_str("## 지휘관 동선 및 교전 요약 기록\n");
 
             if movements.is_empty() && engagements.is_empty() {
                 content.push_str("- 해당 페이즈에 기록된 동선 및 교전이 없습니다.\n");
-                summary_content.push_str("- 해당 페이즈에 기록된 동선 및 교전이 없습니다.\n");
             } else {
                 let mut keys: Vec<&usize> = movements.keys().chain(engagements.keys()).collect();
                 keys.sort();
@@ -269,7 +321,8 @@ impl BattleLogger {
                 });
                 
                 for &squad_leader_id in keys {
-                    let squad_link = format!("[[Squad_{}]]", squad_leader_id);
+                    let s_side = squad_sides.get(&squad_leader_id).unwrap_or(&Side::All);
+                    let squad_link = format_squad_link(squad_leader_id, *s_side);
                     content.push_str(&format!("\n### {} 동선 및 교전\n", squad_link));
                     if let Some(moves) = movements.get(&squad_leader_id) {
                         for m in moves {
@@ -279,10 +332,6 @@ impl BattleLogger {
                     if let Some(engs) = engagements.get(&squad_leader_id) {
                         for e in engs {
                             content.push_str(&format!("{}\n", e));
-                        }
-                        if let Some(first_eng) = engs.first() {
-                            summary_content.push_str(&format!("\n### {} 동선 및 교전\n", squad_link));
-                            summary_content.push_str(&format!("{}\n", first_eng));
                         }
                     }
                 }
@@ -313,12 +362,10 @@ impl BattleLogger {
 
             // [개선] phases/ 디렉토리에 저장
             let _ = fs::write(phase_file, content);
-            let _ = fs::write(summary_file, summary_content);
 
-            // [개선] index.md에 Phase 링크 추가 (phases/ 경로 반영)
+            // [개선] index.md에 Phase 링크 추가 (Summary 제거)
             if let Ok(mut file) = OpenOptions::new().append(true).create(true).open(&index_path) {
                 let _ = writeln!(file, "- [[phases/Phase_{}|Phase {} 기록 보기]] (Trigger: {})", current_phase, current_phase, trigger_string);
-                let _ = writeln!(file, "  - [[phases/Summary_{}|Phase {} 요약 보기]]", current_phase, current_phase);
             }
         });
 
@@ -334,7 +381,6 @@ impl BattleLogger {
         
         self.current_phase += 1;
         self.start_time = end_frame;
-        self.init_phase_dir();
     }
 
     pub fn end_game(&mut self, end_frame: u64, reason: &str) {
@@ -345,25 +391,30 @@ impl BattleLogger {
         
         let file_path = total_dir.join("total.md");
         
-        // [개선] 참여한 모든 분대 목록 수집
-        let all_squads: Vec<String> = self.squad_pages.iter()
-            .map(|s| format!("[[Squad_{}]]", s))
-            .collect();
-        let squads_str = all_squads.join(", ");
+        // Frontmatter 용 (HTML 제외)
+        let all_squads_fm: Vec<String> = self.squad_pages.iter().map(|s| format!("\"[[{}]]\"", s)).collect();
+        let squads_fm_str = all_squads_fm.join(", ");
+
+        // Body 용 (색상 HTML 적용)
+        let all_squads_body: Vec<String> = self.squad_pages.iter().map(|s| {
+            let color = if s.contains("A_Squad") { "#4b8bdf" } else if s.contains("B_Squad") { "#df4b4b" } else { "gray" };
+            format!("<span style=\"color:{}\">[[{}]]</span>", color, s)
+        }).collect();
+        let squads_body_str = all_squads_body.join(", ");
         
         let mut content = String::new();
         content.push_str("---\n");
         content.push_str("phase: total\n");
         content.push_str(&format!("end_frame: {}\n", end_frame));
         content.push_str(&format!("end_reason: \"{}\"\n", reason));
-        content.push_str(&format!("total_squads: [{}]\n", squads_str));
+        content.push_str(&format!("total_squads: [{}]\n", squads_fm_str));
         content.push_str("---\n\n");
 
         content.push_str("# Total Summary\n\n");
         content.push_str("[[../index|상위 디렉토리(Index)로 돌아가기]]\n\n");
         
         content.push_str("## 참여한 모든 분대\n");
-        content.push_str(&format!("{}\n\n", squads_str));
+        content.push_str(&format!("{}\n\n", squads_body_str));
 
         content.push_str("## 종합 전투 손실\n");
         content.push_str(&format!("- 우리팀 (Side A) 총 사망자: {}\n", self.total_deaths_a));
@@ -386,26 +437,31 @@ impl BattleLogger {
         self.append_to_index(&format!("- [[total/total|전체 종합 기록 보기]] (Reason: {})", reason));
     }
 
-    pub fn start_new_order(&mut self, command: &str, squad_id: usize, frame: u64) -> usize {
+    pub fn start_new_order(&mut self, command: &str, squad_id: usize, side: Side, frame: u64) -> usize {
         self.order_counter += 1;
         let order_id = self.order_counter;
         self.current_order_id = Some(order_id);
         
+        let squad_name = format_squad(squad_id, side);
+        let squad_link = format_squad_link(squad_id, side);
+
         // Orders 디렉토리에 명령 페이지 생성
         let order_file = self.base_dir
             .join("orders")
             .join(format!("Order_{}.md", order_id));
         
+        // YAML Frontmatter 에는 따옴표로 감싼 순수 위키링크만 사용하고,
+        // 마크다운 Body 에는 색상이 들어간 HTML 태그(squad_link)를 사용합니다.
         let content = format!(
-            "---\ntitle: Order #{}\nsquad: [[Squad_{}]]\ncommand: {}\nframe: {}\nphase: [[Phase_{}]]\n---\n\n# Order #{}\n\n## 실행 명령\n- 명령어: {}\n- 대상 분대: [[Squad_{}]]\n- 실행 프레임: {}\n\n## 관련 로그\n",
-            order_id, squad_id, command, frame, self.current_phase,
-            order_id, command, squad_id, frame
+            "---\ntitle: Order #{}\ntags: [Side_{}]\nsquad: \"[[{}]]\"\ncommand: \"{}\"\nframe: {}\nphase: \"[[Phase_{}]]\"\n---\n\n# Order #{}\n\n## 실행 명령\n- 명령어: {}\n- 대상 분대: {}\n- 실행 프레임: {}\n\n## 관련 로그\n",
+            order_id, side, squad_name, command, frame, self.current_phase,
+            order_id, command, squad_link, frame
         );
         
         fs::write(&order_file, content).unwrap_or_else(|e| eprintln!("Failed to create order page: {}", e));
         
         // 해당 분대 페이지에 이 명령을 링크 (분대 페이지가 없으면 생성)
-        self.ensure_squad_page(squad_id);
+        self.ensure_squad_page(squad_id, side);
         
         // Phase 페이지에 이 명령 링크 추가
         self.append_to_phase(&format!("- [[Order_{}]] 실행됨 (Frame: {})", order_id, frame));
@@ -414,19 +470,22 @@ impl BattleLogger {
     }
     
     // [신규] 분대 페이지 보장 (없으면 생성)
-    fn ensure_squad_page(&mut self, squad_id: usize) {
-        if self.squad_pages.contains(&squad_id) {
+    fn ensure_squad_page(&mut self, squad_id: usize, side: Side) {
+        let squad_name = format_squad(squad_id, side);
+
+        // squad_pages에는 순수 문자열 이름만 저장하여 중복 및 Frontmatter 에러를 방지합니다.
+        if self.squad_pages.contains(&squad_name) {
             return;
         }
         
-        self.squad_pages.insert(squad_id);
+        self.squad_pages.insert(squad_name.clone());
         let squad_file = self.base_dir
             .join("squads")
-            .join(format!("Squad_{}.md", squad_id));
+            .join(format!("{}.md", squad_name));
         
         let content = format!(
-            "---\ntitle: Squad {}\nfirst_seen: {}\n---\n\n# Squad {}\n\n## 소속 병사\n\n## 참여한 전투 (Phases)\n\n## 실행한 명령 (Orders)\n",
-            squad_id, self.start_time, squad_id
+            "---\ntitle: {}\ntags: [Side_{}]\nfirst_seen: {}\n---\n\n# {}\n\n## 소속 병사\n\n## 참여한 전투 (Phases)\n\n## 실행한 명령 (Orders)\n",
+            squad_name, side, self.start_time, squad_name
         );
         
         fs::write(&squad_file, content).unwrap_or_else(|e| eprintln!("Failed to create squad page: {}", e));

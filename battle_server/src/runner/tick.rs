@@ -52,10 +52,10 @@ impl Runner {
             for (squad_uuid, squad) in self.battle_state.squads() {
                 let leader = self.battle_state.soldier(squad.leader());
                 
-                // [버그 수정: 분대장 전사 시 분대 증발 현상 방지]
-                // 분대장이 죽었더라도 분대원이 살아있다면 해당 분대를 중대 편제에 유지시킵니다.
-                let is_squad_alive = squad.members().iter().any(|m| self.battle_state.soldier(*m).alive());
-                if leader.side() == &side && is_squad_alive {
+                // [Part 1 & 3 개선: 고스트 분대 정찰조 필터링 강화]
+                // 새롭게 추가된 SquadComposition::is_operational() 메서드를 활용하여,
+                // 분대 내에 지휘관 자격을 갖춘 인원이 1명이라도 있는지 확인하고 정상 작동하는 분대만 편제합니다.
+                if leader.side() == &side && squad.is_operational(self.battle_state.soldiers()) {
                     side_squads.push(*squad_uuid);
                 }
             }
@@ -160,6 +160,10 @@ impl Runner {
                             // 1. 해당 중대의 과거 정찰 완료 블랙리스트 기록 조회 및 획득
                             let mut history_guard = self.scouted_history.write().unwrap();
                             let current_history = history_guard.entry(cluster_anchor_key.clone()).or_insert_with(std::collections::HashSet::new);
+
+                            // [히스토리 관리 개선]
+                            // 이미 전멸하거나 해체되어 편제(sorted_squads)에서 사라진 분대는 히스토리 맵에서도 제거하여 논리 무결성을 유지합니다.
+                            current_history.retain(|sq| sorted_squads.contains(sq));
 
                             // 무분별한 리셋 출력을 방지하기 위해 잔여 분대 카운트를 대조하여 리셋을 단행합니다.
                             let has_fresh = sorted_squads.iter().any(|sq| !current_history.contains(sq));

@@ -47,32 +47,33 @@ impl Engine {
 
         // Dragged soldiers
         if let Some(squad_index) = &self.gui_state.dragged_squad() {
-            let cursor = self.gui_state.current_cursor_world_point();
-            let squad = self.battle_state.squad(*squad_index);
-            let leader = self.battle_state.soldier(squad.leader());
+            if let Some(squad) = self.battle_state.squads().get(squad_index) {
+                let cursor = self.gui_state.current_cursor_world_point();
+                let leader = self.battle_state.soldier(squad.leader());
 
-            let (sprites, _) =
-                self.graphics
-                    .soldier_sprites(leader, Some(&cursor), &self.gui_state.zoom);
-            self.graphics
-                .soldiers_mut()
-                .extend(&self.gui_state.zoom, sprites);
-
-            let cursor_immobile_since =
-                self.gui_state.frame_i() - self.gui_state.last_cursor_move_frame();
-            if cursor_immobile_since >= 15 {
-                for (member_id, formation_position) in
-                    squad_positions(squad, Formation::Line, leader, Some(cursor))
-                {
-                    let soldier = self.battle_state.soldier(member_id);
-                    let (sprites, _) = self.graphics.soldier_sprites(
-                        soldier,
-                        Some(&formation_position),
-                        &self.gui_state.zoom,
-                    );
+                let (sprites, _) =
                     self.graphics
-                        .soldiers_mut()
-                        .extend(&self.gui_state.zoom, sprites);
+                        .soldier_sprites(leader, Some(&cursor), &self.gui_state.zoom);
+                self.graphics
+                    .soldiers_mut()
+                    .extend(&self.gui_state.zoom, sprites);
+
+                let cursor_immobile_since =
+                    self.gui_state.frame_i() - self.gui_state.last_cursor_move_frame();
+                if cursor_immobile_since >= 15 {
+                    for (member_id, formation_position) in
+                        squad_positions(squad, Formation::Line, leader, Some(cursor))
+                    {
+                        let soldier = self.battle_state.soldier(member_id);
+                        let (sprites, _) = self.graphics.soldier_sprites(
+                            soldier,
+                            Some(&formation_position),
+                            &self.gui_state.zoom,
+                        );
+                        self.graphics
+                            .soldiers_mut()
+                            .extend(&self.gui_state.zoom, sprites);
+                    }
                 }
             }
         }

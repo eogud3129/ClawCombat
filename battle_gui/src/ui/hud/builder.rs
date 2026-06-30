@@ -113,11 +113,17 @@ impl<'a> HudBuilder<'a> {
 
     fn squad_detail(&self, point: &WindowPoint) -> SquadDetail {
         if let Some(squad_uuid) = self.gui_state.selected_squads().1.first() {
-            SquadDetail::new(
-                *point,
-                Some(SquadStatusResume::from_squad(self.battle_state, squad_uuid)),
-                self.gui_state.selected_squads().0,
-            )
+            // [버그 수정: 삭제된 분대 접근 안전 보장]
+            // 선택된 분대가 병합되어 사라졌을 수 있으므로 맵에 존재하는지 확인합니다.
+            if self.battle_state.squads().contains_key(squad_uuid) {
+                SquadDetail::new(
+                    *point,
+                    Some(SquadStatusResume::from_squad(self.battle_state, squad_uuid)),
+                    self.gui_state.selected_squads().0,
+                )
+            } else {
+                SquadDetail::empty(*point)
+            }
         } else {
             SquadDetail::empty(*point)
         }
@@ -154,7 +160,7 @@ impl<'a> HudBuilder<'a> {
             .1
             .clone()
             .iter()
-            .map(|i| self.battle_state.squad(*i))
+            .filter_map(|i| self.battle_state.squads().get(i))
             .map(|s| self.battle_state.soldier(s.leader()))
             .map(|s| s.world_point())
             .collect();

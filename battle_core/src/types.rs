@@ -428,6 +428,19 @@ impl SquadComposition {
     pub fn subordinates(&self) -> Vec<&SoldierIndex> {
         self.2.iter().filter(|i| i != &&self.0).collect()
     }
+
+    // [Part 1 개선: 분대 생존(기능) 상태 정확한 판별]
+    // 분대 내에 지휘관 역할을 수행할 수 있는(즉, 살아있고 기절하지 않았으며 맵에 존재하는)
+    // 인원이 단 1명이라도 있는지 확인하여 분대의 실질적인 작전 수행 가능 여부를 판단합니다.
+    pub fn is_operational(&self, soldiers: &[crate::entity::soldier::Soldier]) -> bool {
+        self.2.iter().any(|m| {
+            if m.0 < soldiers.len() {
+                soldiers[m.0].can_be_leader()
+            } else {
+                false
+            }
+        })
+    }
 }
 
 #[derive(Debug, Copy, Clone, Serialize, Deserialize, PartialEq)]

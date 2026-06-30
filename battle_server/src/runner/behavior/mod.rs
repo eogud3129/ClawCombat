@@ -244,7 +244,8 @@ impl Runner {
         }
 
         let mut target_interior_for_breach = None;
-        if !is_defending && !is_indoor_breach && !squad_recent_breach {
+        // [예외 유지] 정찰조(is_scout)는 실내 건물 정찰할 때 수류탄을 선투척하는 로직을 그대로 유지합니다.
+        if is_scout && !is_defending && !is_indoor_breach && !squad_recent_breach {
             for interior in map.interiors() {
                 let center_x = interior.x() + interior.width() / 2.0;
                 let center_y = interior.y() + interior.height() / 2.0;
@@ -322,88 +323,69 @@ impl Runner {
             // return 없이 통과시켜 하단의 match current_order 가 정상적으로 이동 행동(Behavior)을 반환하게 둡니다.
         }
 
-        // [YOLO Mode Auto-Grenade] 전투 시작 전 (거점/적진 반경 25m 이내 접근 시) 수류탄 투척 (3초 쿨타임 적용)
-        if !is_defending && (yolo_active || is_scout) && soldier.grenades() > 0 && *self.battle_state.frame_i() > soldier.last_grenade_frame_i() + 180 {
-            let map = self.battle_state.map();
-            let mut target_flag = None;
+        // [Targeted Grenade: 적군 고착 판별 기반 투척]
+        // 무조건적인 진입 전 투척을 제거하고, 상대 팀원이 3초(180 프레임) 이상 이동하지 않고 고착(Hide/Defend) 상태에 있을 때 수류탄을 투척하여 소탕을 유도합니다.
+        // 쿨타임(180 프레임)을 적용하여 연속 투척을 방지합니다.
+        if !is_defending && soldier.grenades() > 0 && *self.battle_state.frame_i() > soldier.last_grenade_frame_i() + 180 {
+            let mut target_enemy = None;
             let mut min_dist_meters = std::i64::MAX;
 
-            for flag in map.flags() {
-                let is_owned = self.battle_state.flags().ownerships().iter().any(|(n, o)| {
-                    n == flag.name() && (
-                        o == &FlagOwnership::Both || 
-                        (is_side_a && o == &FlagOwnership::A) ||
-                        (is_side_b && o == &FlagOwnership::B)
-                    )
-                });
-
-                if !is_owned {
-                    // 픽셀이 아닌 실제 미터(meters) 단위로 정확한 거리 측정
-                    let dist = battle_core::physics::utils::distance_between_points(&soldier.world_point(), &flag.position()).meters();
-                    if dist < min_dist_meters {
-                        min_dist_meters = dist;
-                        target_flag = Some(flag.clone());
+            for enemy in self.battle_state.soldiers() {
+                if enemy.side() != soldier.side() && enemy.alive() {
+                    let dist = battle_core::physics::utils::distance_between_points(&soldier.world_point(), &enemy.world_point()).meters();
+                    // 25m 이내에 있는 적군 탐지
+                    if dist <= 25 {
+                        // 상대방이 정지(엄폐/방어) 상태인지 확인
+                        let is_enemy_hiding = matches!(enemy.behavior(), battle_core::behavior::Behavior::Hide(_) | battle_core::behavior::Behavior::Defend(_) | battle_core::behavior::Behavior::ScatterToCover(_) | battle_core::behavior::Behavior::GatherToCover(_));
+                        let immobile_frames = self.battle_state.frame_i().saturating_sub(enemy.last_hide_frame_i());
+                        
+                        // 상대 팀이 해당 상태로 3초(180프레임) 이상 꼼짝 않고 버티고 있다면 투척 타겟으로 지정
+                        if is_enemy_hiding && immobile_frames >= 180 {
+                            if dist < min_dist_meters {
+                                min_dist_meters = dist;
+                                target_enemy = Some(enemy);
+                            }
+                        }
                     }
                 }
             }
 
-            if let Some(flag) = target_flag {
-                // 기존 15픽셀(4.5m) 단위의 오계산을 실제 25m(미터) 단위로 수정하여 교전 직전 확실하게 투척
-                if min_dist_meters <= 25 {
-                    // [조건 추가] 타겟 깃발 주변 반경 15m 이내에 살아있는 적군이 있는지 확인하여, 허공에 수류탄을 낭비하지 않도록 방지합니다.
-                    let mut enemy_near_flag = false;
-                    for enemy in self.battle_state.soldiers() {
-                        if enemy.side() != soldier.side() && enemy.alive() {
-                            let dist_to_flag = battle_core::physics::utils::distance_between_points(&flag.position(), &enemy.world_point());
-                            if dist_to_flag.meters() <= 15 {
-                                enemy_near_flag = true;
-                                break;
-                            }
-                        }
-                    }
+            if let Some(enemy) = target_enemy {
+                let pixel_dist = (enemy.world_point().to_vec2() - soldier.world_point().to_vec2()).length();
+                let direction = if pixel_dist > 0.1 {
+                    (enemy.world_point().to_vec2() - soldier.world_point().to_vec2()).normalize()
+                } else {
+                    glam::Vec2::new(1.0, 0.0)
+                };
 
-                    if enemy_near_flag {
-                        let pixel_dist = (flag.position().to_vec2() - soldier.world_point().to_vec2()).length();
-                        // NaN(Not a Number) 좌표 증발 오류 방지를 위한 방어 코드 및 타겟 방향 80% 지점에 안착하도록 연산
-                        let direction = if pixel_dist > 0.1 {
-                            (flag.position().to_vec2() - soldier.world_point().to_vec2()).normalize()
-                        } else {
-                            glam::Vec2::new(1.0, 0.0)
-                        };
+                // [측면 투척 변환] 병사 고유 ID를 분기하여 좌측 혹은 우측으로 30도(0.523 라디안) 각도를 회전 행렬로 꺾어 던지도록 계산
+                let throw_angle: f32 = if soldier.uuid().0 % 2 == 0 { 0.523 } else { -0.523 };
+                let cos_t = throw_angle.cos();
+                let sin_t = throw_angle.sin();
+                let side_direction = glam::Vec2::new(
+                    direction.x * cos_t - direction.y * sin_t,
+                    direction.x * sin_t + direction.y * cos_t
+                );
+                
+                // 타겟이 된 고착 적군 위치 주변으로 투척
+                let throw_target = battle_core::types::WorldPoint::from_vec2(soldier.world_point().to_vec2() + side_direction * (pixel_dist * 0.8));
 
-                        // [측면 투척 변환] 병사 고유 ID를 분기하여 좌측 혹은 우측으로 30도(0.523 라디안) 각도를 회전 행렬로 꺾어 던지도록 계산
-                        let throw_angle: f32 = if soldier.uuid().0 % 2 == 0 { 0.523 } else { -0.523 };
-                        let cos_t = throw_angle.cos();
-                        let sin_t = throw_angle.sin();
-                        let side_direction = glam::Vec2::new(
-                            direction.x * cos_t - direction.y * sin_t,
-                            direction.x * sin_t + direction.y * cos_t
-                        );
-                        let throw_target = battle_core::types::WorldPoint::from_vec2(soldier.world_point().to_vec2() + side_direction * (pixel_dist * 0.8));
-    
-                        // [기획 반영 2-2] 즉발 폭발 스폰을 제거하고, 1~1.5초(60~90 프레임)의 무기 전환 및 투척 딜레이 상태(Throwing)로 돌입시킵니다.
-                        let mut rng = rand::thread_rng();
-                        let delay_frames = rand::Rng::gen_range(&mut rng, 60..90);
-                        let throw_end_frame = *self.battle_state.frame_i() + delay_frames;
+                let mut rng = rand::thread_rng();
+                let delay_frames = rand::Rng::gen_range(&mut rng, 60..90);
+                let throw_end_frame = *self.battle_state.frame_i() + delay_frames;
 
-                        messages.push(RunnerMessage::BattleState(BattleStateMessage::Soldier(
-                            soldier.uuid(),
-                            SoldierMessage::SetGesture(battle_core::behavior::gesture::Gesture::Throwing(throw_end_frame, throw_target))
-                        )));
-                        messages.push(RunnerMessage::BattleState(BattleStateMessage::Soldier(
-                            soldier.uuid(),
-                            SoldierMessage::ConsumeGrenade
-                        )));
-                        messages.push(RunnerMessage::BattleState(BattleStateMessage::Soldier(
-                            soldier.uuid(),
-                            SoldierMessage::SetLastGrenadeFrameI(*self.battle_state.frame_i())
-                        )));
-
-                        // [기획 반영: 정찰조 수류탄 파지 후 사격 불가 버그 수정]
-                        // 투척 후 강제로 도망(MoveFastTo)가게 만들던 로직을 제거합니다. 
-                        // 병사들은 현재의 기동/탐색 행동을 그대로 유지한 채 걸어가면서 수류탄만 자연스럽게 던지게 되며, 적 조우 시 즉각 엎드려 사격이 가능해집니다.
-                    }
-                }
+                messages.push(RunnerMessage::BattleState(BattleStateMessage::Soldier(
+                    soldier.uuid(),
+                    SoldierMessage::SetGesture(battle_core::behavior::gesture::Gesture::Throwing(throw_end_frame, throw_target))
+                )));
+                messages.push(RunnerMessage::BattleState(BattleStateMessage::Soldier(
+                    soldier.uuid(),
+                    SoldierMessage::ConsumeGrenade
+                )));
+                messages.push(RunnerMessage::BattleState(BattleStateMessage::Soldier(
+                    soldier.uuid(),
+                    SoldierMessage::SetLastGrenadeFrameI(*self.battle_state.frame_i())
+                )));
             }
         }
 

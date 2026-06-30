@@ -36,45 +36,48 @@ use super::{
 impl Engine {
     pub fn generate_selected_entities_meshes(&self, mesh_builder: &mut MeshBuilder) -> GameResult {
         for squad_uuid in &self.gui_state.selected_squads().1 {
-            for soldier_index in self.battle_state.squad(*squad_uuid).members() {
-                let soldier = self.battle_state.soldier(*soldier_index);
-                let point = self
-                    .gui_state
-                    .window_point_from_world_point(soldier.world_point());
+            if let Some(squad) = self.battle_state.squads().get(squad_uuid) {
+                for soldier_index in squad.members() {
+                    let soldier = self.battle_state.soldier(*soldier_index);
+                    let point = self
+                        .gui_state
+                        .window_point_from_world_point(soldier.world_point());
 
-                mesh_builder.rectangle(
-                    DrawMode::Stroke(StrokeOptions::default()),
-                    Rect::new(
-                        point.x - DEFAULT_SELECTED_SQUARE_SIDE_HALF,
-                        point.y - DEFAULT_SELECTED_SQUARE_SIDE_HALF,
-                        DEFAULT_SELECTED_SQUARE_SIDE,
-                        DEFAULT_SELECTED_SQUARE_SIDE,
-                    ),
-                    SoldierHealthBuilder::new(soldier).build().color(),
-                )?;
-                if self.battle_state.squad(soldier.squad_uuid()).leader() == soldier.uuid() {
                     mesh_builder.rectangle(
                         DrawMode::Stroke(StrokeOptions::default()),
                         Rect::new(
-                            point.x - DEFAULT_SELECTED_SQUARE_SIDE_HALF - 1.,
-                            point.y - DEFAULT_SELECTED_SQUARE_SIDE_HALF - 1.,
-                            DEFAULT_SELECTED_SQUARE_SIDE + 2.,
-                            DEFAULT_SELECTED_SQUARE_SIDE + 2.,
+                            point.x - DEFAULT_SELECTED_SQUARE_SIDE_HALF,
+                            point.y - DEFAULT_SELECTED_SQUARE_SIDE_HALF,
+                            DEFAULT_SELECTED_SQUARE_SIDE,
+                            DEFAULT_SELECTED_SQUARE_SIDE,
                         ),
-                        Color::BLUE,
+                        SoldierHealthBuilder::new(soldier).build().color(),
                     )?;
-                }
-                if self.gui_state.selected_squads().0 == Some(*soldier_index) {
-                    mesh_builder.rectangle(
-                        DrawMode::Stroke(StrokeOptions::default()),
-                        Rect::new(
-                            point.x - DEFAULT_SELECTED_SQUARE_SIDE_HALF + 1.,
-                            point.y - DEFAULT_SELECTED_SQUARE_SIDE_HALF + 1.,
-                            DEFAULT_SELECTED_SQUARE_SIDE - 2.,
-                            DEFAULT_SELECTED_SQUARE_SIDE - 2.,
-                        ),
-                        Color::WHITE,
-                    )?;
+                    // [버그 수정: 삭제된 분대 접근 안전 보장 및 최신 리더 판별]
+                    if squad.leader() == soldier.uuid() {
+                        mesh_builder.rectangle(
+                            DrawMode::Stroke(StrokeOptions::default()),
+                            Rect::new(
+                                point.x - DEFAULT_SELECTED_SQUARE_SIDE_HALF - 1.,
+                                point.y - DEFAULT_SELECTED_SQUARE_SIDE_HALF - 1.,
+                                DEFAULT_SELECTED_SQUARE_SIDE + 2.,
+                                DEFAULT_SELECTED_SQUARE_SIDE + 2.,
+                            ),
+                            Color::BLUE,
+                        )?;
+                    }
+                    if self.gui_state.selected_squads().0 == Some(*soldier_index) {
+                        mesh_builder.rectangle(
+                            DrawMode::Stroke(StrokeOptions::default()),
+                            Rect::new(
+                                point.x - DEFAULT_SELECTED_SQUARE_SIDE_HALF + 1.,
+                                point.y - DEFAULT_SELECTED_SQUARE_SIDE_HALF + 1.,
+                                DEFAULT_SELECTED_SQUARE_SIDE - 2.,
+                                DEFAULT_SELECTED_SQUARE_SIDE - 2.,
+                            ),
+                            Color::WHITE,
+                        )?;
+                    }
                 }
             }
         }

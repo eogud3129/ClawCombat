@@ -305,13 +305,11 @@ impl BattleState {
             BattleStateMessage::SetAMorale(morale) => self.a_morale = morale.clone(),
             BattleStateMessage::SetBMorale(morale) => self.b_morale = morale.clone(),
             BattleStateMessage::SetSquadLeader(squad_uuid, soldier_index) => {
-                // [개선: 대여 검사기 격리 우회 및 소유권 이동 차단 반영]
-                // self.squads전체 맵 순회와 특정 원소의 가변 변경이 충돌하지 않도록 컨텍스트를 스코프별로 철저히 격리합니다.
                 let mut side = Side::A;
                 let mut members_to_move = vec![];
                 let mut has_squad = false;
 
-                if let Some(squad_comp) = self.squads.get(&squad_uuid) {
+                if let Some(squad_comp) = self.squads.get(squad_uuid) {
                     has_squad = true;
                     if let Some(first_member) = squad_comp.members().first() {
                         if first_member.0 < self.soldiers.len() {
@@ -322,20 +320,15 @@ impl BattleState {
                 }
 
                 if has_squad {
-                    let respawn_point = match side {
-                        Side::A => WorldPoint::new(10.0, 10.0),
-                        Side::B => WorldPoint::new(500.0, 500.0),
-                        _ => WorldPoint::new(10.0, 10.0),
-                    };
-
-                    // 1. 소속 대원들의 복귀 오더 인입을 진행합니다.
+                    // [Part 4 개선: 불필요한 강제 복귀 명령 주입 제거 및 명령 클리어]
+                    // 스폰 지점 복귀(SneakTo)를 임의로 주입하면 합류할 분대의 명령과 충돌하여 병사가 멈춰 서는 디더링이 발생합니다.
+                    // 기존 행동을 깔끔하게 지우고 새 지휘관의 명령을 온전히 받을 준비를 시킵니다.
                     for member_idx in &members_to_move {
                         if member_idx.0 < self.soldiers.len() {
                             let member = &mut self.soldiers[member_idx.0];
                             if member.alive() {
-                                let back_path = crate::types::WorldPaths::new(vec![crate::types::WorldPath::new(vec![respawn_point])]);
-                                member.set_order(Order::SneakTo(back_path.clone(), None));
-                                member.set_behavior(Behavior::SneakTo(back_path));
+                                member.set_order(Order::Idle);
+                                member.set_behavior(Behavior::Idle(Body::StandUp));
                                 member.set_gesture(crate::behavior::gesture::Gesture::Idle);
                             }
                         }
@@ -344,7 +337,6 @@ impl BattleState {
                     // 2. 살아있는 다른 대상 분대를 탐색합니다. (self.squads 불변 참조)
                     let mut target_squad_uuid = None;
                     for (other_uuid, other_squad) in &self.squads {
-                        // [에러 수정: other_uuid 가 &SquadUuid 타입이므로 우항의 불필요한 & 참조를 삭제하여 1:1 대조를 성립시킵니다]
                         if other_uuid != squad_uuid {
                             let mut has_alive_leader = false;
                             let leader_idx = other_squad.leader();
@@ -358,15 +350,14 @@ impl BattleState {
                         }
                     }
 
-                    // 3. 탐색된 대상 분대로 병합하거나 지휘권을 이양합니다. (self.squads 가변 참조 진입)
+                    // 3. 탐색된 대상 분대로 병합하거나 지휘권을 이양합니다.
                     if let Some(next_squad_id) = target_squad_uuid {
                         if let Some(next_squad) = self.squads.get_mut(&next_squad_id) {
                             let next_leader_order = self.soldiers[next_squad.leader().0].order().clone();
                             let next_leader_behavior = self.soldiers[next_squad.leader().0].behavior().clone();
                             for m in members_to_move {
                                 if m.0 < self.soldiers.len() && self.soldiers[m.0].alive() {
-                                    // [메모리 크래시 에러 수정: 안전한 합법적 가변 인터페이스 접근으로 힙 파괴 원천 차단]
-                                    // [연산 폭주 방지 패치] 중복 병합으로 인해 멤버 수가 수천 명으로 증식하는 메모리 릭과 CPU 폭주 현상을 차단합니다.
+                                    // [중복 병합 방지 로직 보강] 중복 검사를 거쳐 안전하게 합류
                                     if !next_squad.members().contains(&m) {
                                         next_squad.members_mut().push(m);
                                     }
@@ -377,12 +368,12 @@ impl BattleState {
                             }
                         }
                         
-                        // 분대 병합 완료 후, 기존 유령 분대의 잔여 멤버를 확실하게 비워 무한 병합(루프) 트리거를 종식시킵니다.
-                        if let Some(old_squad) = self.squads.get_mut(&squad_uuid) {
-                            old_squad.members_mut().clear();
-                        }
+                        // [Part 4 개선: 분대 병합 시 기존 분대 완전 삭제]
+                        // 멤버만 비우고 맵에 남겨두는 방식은 루프 안정성과 정찰조 유령 호출을 야기합니다.
+                        // 병합 완료 후 기존 깡통 분대를 squads 맵에서 완전히 제거하여 소멸시킵니다.
+                        self.squads.remove(squad_uuid);
                     } else {
-                        if let Some(squad_comp) = self.squads.get_mut(&squad_uuid) {
+                        if let Some(squad_comp) = self.squads.get_mut(squad_uuid) {
                             *squad_comp.leader_mut() = *soldier_index;
                             let leader_order = self.soldiers[soldier_index.0].order().clone();
                             let leader_behavior = self.soldiers[soldier_index.0].behavior().clone();

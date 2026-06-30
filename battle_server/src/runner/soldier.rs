@@ -152,25 +152,30 @@ impl Runner {
         let tick_update =
             self.battle_state.frame_i() % self.config.squad_leaders_update_freq() == 0;
 
-        // [사망 처리 및 지휘관 교체 프리징 버그 해결]
-        // 기존 120프레임(2초) 고정 주기 조건문 내부에서 분대장 생존 여부를 판별하면 전사 시 2초간 무전과 기동이 먹통이 됩니다.
-        // 루프를 밖으로 빼내어, 지휘관 능력을 완전 상실했거나(!can_be_leader()) 사망(!alive()) 상태라면 주기와 관계없이 즉각(Every frame) 지휘권을 다음 병사에게 승계시킵니다.
+        // [지휘관 즉각 교체 로직 최적화]
+        // can_be_leader() 내부에 이미 alive 및 상태 체크가 포함되어 있으므로, 
+        // 중복 판별을 제거하고 자격 상실 시 1프레임 내에 즉시 승계자를 찾아 교체합니다.
         for squad_uuid in self.battle_state.squads().keys() {
             let squad = self.battle_state.squad(*squad_uuid);
+            
+            // [Part 1 개선: 작동 불능(고스트) 분대 승계 스킵]
+            // 분대 전체가 전멸했거나 무력화되어 operational 하지 않다면 지휘관 승계 프로세스 자체를 생략합니다.
+            if !squad.is_operational(self.battle_state.soldiers()) {
+                continue;
+            }
+
             let leader = self.battle_state.soldier(squad.leader());
 
-            if !leader.can_be_leader() || !leader.alive() || tick_update {
-                if !leader.can_be_leader() || !leader.alive() {
-                    if let Some(member) = squad
-                        .subordinates()
-                        .iter()
-                        .map(|s| self.battle_state.soldier(**s))
-                        .find(|s| s.can_be_leader() && s.alive())
-                    {
-                        messages.push(RunnerMessage::BattleState(
-                            BattleStateMessage::SetSquadLeader(*squad_uuid, member.uuid()),
-                        ))
-                    }
+            if !leader.can_be_leader() {
+                if let Some(member) = squad
+                    .subordinates()
+                    .iter()
+                    .map(|s| self.battle_state.soldier(**s))
+                    .find(|s| s.can_be_leader())
+                {
+                    messages.push(RunnerMessage::BattleState(
+                        BattleStateMessage::SetSquadLeader(*squad_uuid, member.uuid()),
+                    ));
                 }
             }
         }

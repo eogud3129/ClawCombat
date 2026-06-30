@@ -141,6 +141,7 @@ impl Runner {
                                 let new_sector = format!("{}{}", new_letter, new_col_idx);
 
                                 let soldier_posture = self.battle_state.soldier(*idx);
+                                let side = *soldier_posture.side();
                                 let posture_str = match soldier_posture.behavior() {
                                     battle_core::behavior::Behavior::Hide(_) | battle_core::behavior::Behavior::ScatterToCover(_) | battle_core::behavior::Behavior::GatherToCover(_) => "숨음",
                                     _ => match soldier_posture.body() {
@@ -151,7 +152,7 @@ impl Runner {
                                 };
 
                                 if let Some(logger) = &mut self.logger {
-                                    logger.log_movement(current_frame, *idx, old_sector, new_sector, &terrain_str, is_indoor, dist_m, posture_str);
+                                    logger.log_movement(current_frame, side, *idx, old_sector, new_sector, &terrain_str, is_indoor, dist_m, posture_str);
                                 }
                             }
                         }
@@ -203,8 +204,11 @@ impl Runner {
                                 // 거리가 짧을수록 위협이 커지도록 역산 (100m 기준) 후 공격량과 합산
                                 let threat_score = (100.0 - dist_m.min(100.0)).max(0.0) * 2.0 + enemy_attack_volume;
 
+                                let side = *soldier_posture.side();
+                                let target_side = *target_leader.side();
+
                                 if let Some(logger) = &mut self.logger {
-                                    logger.log_engagement(current_frame, *idx, target_squad_uuid.0, target_grid, &target_sector, alive_count, &terrain_str, is_indoor, posture_str, threat_score);
+                                    logger.log_engagement(current_frame, side, *idx, target_side, target_squad_uuid.0, target_grid, &target_sector, alive_count, &terrain_str, is_indoor, posture_str, threat_score);
                                 }
                             }
                         }
