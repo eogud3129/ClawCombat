@@ -5,3 +5,4 @@ prd.md
 *~
 *.gguf
 *.bin
+/logs/
