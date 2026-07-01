@@ -42,6 +42,7 @@ pub struct BattleLogger {
     order_counter: usize,
     squad_pages: HashSet<String>,
     squad_sides: HashMap<usize, Side>,
+    squad_sizes: HashMap<usize, usize>,
     
     // 캔버스 생성을 위한 지원 요청 및 할당 데이터 수집
     support_requests: HashMap<usize, Vec<SupportRequestLog>>,
@@ -50,6 +51,8 @@ pub struct BattleLogger {
     canvas_events: Vec<CanvasEventLog>, // 전황 지도용 이벤트 로그
     canvas_node_counter: usize,
     canvas_edge_counter: usize,
+    index_nodes: Vec<serde_json::Value>,
+    index_edges: Vec<serde_json::Value>,
 }
 
 // 지원 요청 로그 구조체
@@ -109,7 +112,7 @@ impl BattleLogger {
         fs::create_dir_all(&base_dir.join("squads")).unwrap_or_else(|e| eprintln!("Failed to create squads dir: {}", e));
         fs::create_dir_all(&base_dir.join("orders")).unwrap_or_else(|e| eprintln!("Failed to create orders dir: {}", e));
         
-        let logger = Self {
+        let mut logger = Self {
             base_dir,
             current_phase: 1,
             start_time: start_frame,
@@ -129,12 +132,15 @@ impl BattleLogger {
             order_counter: 0,
             squad_pages: HashSet::new(),
             squad_sides: HashMap::new(),
+            squad_sizes: HashMap::new(),
             support_requests: HashMap::new(),
             support_assignments: HashMap::new(),
             support_supplies: HashMap::new(),
             canvas_events: Vec::new(),
             canvas_node_counter: 0,
             canvas_edge_counter: 0,
+            index_nodes: Vec::new(),
+            index_edges: Vec::new(),
         };
         
         logger.init_index();
@@ -142,11 +148,55 @@ impl BattleLogger {
         logger
     }
 
-    fn init_index(&self) {
-        let index_path = self.base_dir.join("index.md");
-        if !index_path.exists() {
-            let content = "---\ntitle: Battle Log Index\n---\n\n# 전장 종합 기록 (Battle Logs)\n\n옵시디언 위키 링크를 통해 각 페이즈(Phase)별 세부 기록을 확인할 수 있습니다.\n\n## Phases\n";
-            fs::write(&index_path, content).unwrap_or_else(|e| eprintln!("Failed to create index.md: {}", e));
+    pub fn update_squad_size(&mut self, squad_id: usize, size: usize) {
+        self.squad_sizes.insert(squad_id, size);
+    }
+
+    fn init_index(&mut self) {
+        let title_node = serde_json::json!({
+            "id": "index_title",
+            "type": "text",
+            "text": "# 전장 종합 기록 (Battle Logs)\n\n전체 Phase의 진행 흐름을 시각적으로 확인합니다.",
+            "x": 0.0,
+            "y": -300.0,
+            "width": 600.0,
+            "height": 150.0,
+            "color": "3498db"
+        });
+        self.index_nodes.push(title_node);
+        self.write_index_canvas();
+    }
+
+    fn write_index_canvas(&mut self) {
+        let mut total_a_squads = 0;
+        let mut total_b_squads = 0;
+        let mut total_a_soldiers = 0;
+        let mut total_b_soldiers = 0;
+        for (squad_id, side) in &self.squad_sides {
+            let size = *self.squad_sizes.get(squad_id).unwrap_or(&0);
+            if *side == Side::A { 
+                total_a_squads += 1; 
+                total_a_soldiers += size;
+            }
+            if *side == Side::B { 
+                total_b_squads += 1; 
+                total_b_soldiers += size;
+            }
+        }
+
+        let title_text = format!("# 전장 종합 기록 (Battle Logs)\n\n전체 Phase의 진행 흐름을 시각적으로 확인합니다.\n\n**🟦 Side A 총계**\n- 누적 참여 분대: {}개 ({}명)\n- 누적 전사자: {}명\n\n**🟥 Side B 총계**\n- 누적 참여 분대: {}개 ({}명)\n- 누적 전사자: {}명", total_a_squads, total_a_soldiers, self.total_deaths_a, total_b_squads, total_b_soldiers, self.total_deaths_b);
+
+        if let Some(title_node) = self.index_nodes.iter_mut().find(|n| n["id"] == "index_title") {
+            title_node["text"] = serde_json::json!(title_text);
+        }
+
+        let index_path = self.base_dir.join("index.canvas");
+        let canvas_json = serde_json::json!({
+            "nodes": self.index_nodes,
+            "edges": self.index_edges
+        });
+        if let Ok(canvas_string) = serde_json::to_string_pretty(&canvas_json) {
+            let _ = fs::write(&index_path, canvas_string);
         }
     }
 
@@ -176,13 +226,6 @@ impl BattleLogger {
   ]
 }"#;
             let _ = fs::write(graph_json_path, graph_json_content);
-        }
-    }
-
-    fn append_to_index(&self, text: &str) {
-        let index_path = self.base_dir.join("index.md");
-        if let Ok(mut file) = OpenOptions::new().append(true).create(true).open(&index_path) {
-            writeln!(file, "{}", text).unwrap_or_default();
         }
     }
 
@@ -257,7 +300,7 @@ impl BattleLogger {
             squad_id: soldier.0,
             event_type: "Engagement".to_string(),
             sector: target_sector.to_string(),
-            desc: format!("💥 교전 개시\n목표: 분대 {} ({}명)\n위협도: {:.1}", target_squad, target_count, threat_score),
+            desc: format!("💥 교전 개시\n목표: [[{}]] ({}명)\n위협도: {:.1}", format_squad(target_squad, target_side), target_count, threat_score),
             target_squad: Some(target_squad),
         });
         
@@ -405,20 +448,20 @@ impl BattleLogger {
         let canvas_file = self.base_dir
             .join("phases")
             .join(format!("Phase_{}.canvas", self.current_phase));
-        let index_path = self.base_dir.join("index.md");
         
         let current_phase = self.current_phase;
         let start_time = self.start_time;
         let trigger_string = trigger.to_string();
 
-        let movements = self.movements.clone();
-        let engagements = self.engagements.clone();
-        let squad_threat_scores = self.squad_threat_scores.clone();
-        let deaths_a = self.deaths_a.clone();
-        let deaths_b = self.deaths_b.clone();
-        let ammo_a = self.ammo_a;
-        let ammo_b = self.ammo_b;
+        let _movements = self.movements.clone();
+        let _engagements = self.engagements.clone();
+        let _squad_threat_scores = self.squad_threat_scores.clone();
+        let _deaths_a = self.deaths_a.clone();
+        let _deaths_b = self.deaths_b.clone();
+        let _ammo_a = self.ammo_a;
+        let _ammo_b = self.ammo_b;
         let squad_sides = self.squad_sides.clone();
+        let _squad_sizes = self.squad_sizes.clone();
         let base_dir = self.base_dir.clone();
         let current_phase_owned = current_phase;
         
@@ -428,11 +471,46 @@ impl BattleLogger {
         let support_supplies_phase = self.support_supplies.get(&current_phase).cloned().unwrap_or_default();
         let canvas_events_phase = self.canvas_events.clone();
 
+        // index.canvas 노드/엣지 추가
+        let timestamp_dir = self.base_dir.file_name().unwrap_or_default().to_string_lossy();
+        let phase_node_id = format!("index_phase_{}", current_phase);
+        let phase_file_path = format!("{}/phases/Phase_{}.canvas", timestamp_dir, current_phase);
+        
+        let y_pos = (current_phase as f32 - 1.0) * 500.0;
+        
+        let phase_node = serde_json::json!({
+            "id": phase_node_id.clone(),
+            "type": "file",
+            "file": phase_file_path,
+            "x": 0.0,
+            "y": y_pos,
+            "width": 600.0,
+            "height": 400.0,
+            "color": "888888"
+        });
+        
+        self.index_nodes.push(phase_node);
+        
+        if current_phase > 1 {
+            let prev_phase_node_id = format!("index_phase_{}", current_phase - 1);
+            let edge = serde_json::json!({
+                "id": format!("index_edge_{}", current_phase),
+                "fromNode": prev_phase_node_id,
+                "toNode": phase_node_id.clone(),
+                "label": "Next Phase",
+                "type": "arrow"
+            });
+            self.index_edges.push(edge);
+        }
+        
+        self.write_index_canvas();
+
         thread::spawn(move || {
+            /* // phase_N.md 생성 로직 주석 처리
             let mut content = String::new();
             
-            let mut squads_in_phase_fm: Vec<String> = movements.keys()
-                .chain(engagements.keys())
+            let mut squads_in_phase_fm: Vec<String> = _movements.keys()
+                .chain(_engagements.keys())
                 .map(|s| {
                     let s_side = squad_sides.get(s).unwrap_or(&Side::All);
                     format!("\"[[{}]]\"", format_squad(*s, *s_side))
@@ -443,8 +521,8 @@ impl BattleLogger {
             squads_in_phase_fm.sort();
             let squads_fm_str = squads_in_phase_fm.join(", ");
 
-            let mut squads_in_phase_body: Vec<String> = movements.keys()
-                .chain(engagements.keys())
+            let mut squads_in_phase_body: Vec<String> = _movements.keys()
+                .chain(_engagements.keys())
                 .map(|s| {
                     let s_side = squad_sides.get(s).unwrap_or(&Side::All);
                     format_squad_link(*s, *s_side)
@@ -469,15 +547,15 @@ impl BattleLogger {
 
             content.push_str("## 지휘관 동선 및 교전 기록\n");
 
-            if movements.is_empty() && engagements.is_empty() {
+            if _movements.is_empty() && _engagements.is_empty() {
                 content.push_str("- 해당 페이즈에 기록된 동선 및 교전이 없습니다.\n");
             } else {
-                let mut keys: Vec<&usize> = movements.keys().chain(engagements.keys()).collect();
+                let mut keys: Vec<&usize> = _movements.keys().chain(_engagements.keys()).collect();
                 keys.sort();
                 keys.dedup();
                 keys.sort_by(|a, b| {
-                    let score_a = squad_threat_scores.get(*a).unwrap_or(&0.0);
-                    let score_b = squad_threat_scores.get(*b).unwrap_or(&0.0);
+                    let score_a = _squad_threat_scores.get(*a).unwrap_or(&0.0);
+                    let score_b = _squad_threat_scores.get(*b).unwrap_or(&0.0);
                     score_b.partial_cmp(score_a).unwrap_or(std::cmp::Ordering::Equal)
                 });
                 
@@ -485,12 +563,12 @@ impl BattleLogger {
                     let s_side = squad_sides.get(&squad_leader_id).unwrap_or(&Side::All);
                     let squad_link = format_squad_link(squad_leader_id, *s_side);
                     content.push_str(&format!("\n### {} 동선 및 교전\n", squad_link));
-                    if let Some(moves) = movements.get(&squad_leader_id) {
+                    if let Some(moves) = _movements.get(&squad_leader_id) {
                         for m in moves {
                             content.push_str(&format!("{}\n", m));
                         }
                     }
-                    if let Some(engs) = engagements.get(&squad_leader_id) {
+                    if let Some(engs) = _engagements.get(&squad_leader_id) {
                         for e in engs {
                             content.push_str(&format!("{}\n", e));
                         }
@@ -500,28 +578,29 @@ impl BattleLogger {
             
             content.push_str("\n## 전투 손실 (시간순)\n");
             content.push_str("### 우리팀 (Side A)\n");
-            if deaths_a.is_empty() {
+            if _deaths_a.is_empty() {
                 content.push_str("- 사상자 없음\n");
             } else {
-                for d in &deaths_a {
+                for d in &_deaths_a {
                     content.push_str(&format!("{}\n", d));
                 }
             }
             
             content.push_str("\n### 상대팀 (Side B)\n");
-            if deaths_b.is_empty() {
+            if _deaths_b.is_empty() {
                 content.push_str("- 사상자 없음\n");
             } else {
-                for d in &deaths_b {
+                for d in &_deaths_b {
                     content.push_str(&format!("{}\n", d));
                 }
             }
             
             content.push_str("\n## 탄약 소모\n");
-            content.push_str(&format!("- 우리팀 (Side A) 탄약 소모량: {}\n", ammo_a));
-            content.push_str(&format!("- 상대팀 (Side B) 탄약 소모량: {}\n", ammo_b));
+            content.push_str(&format!("- 우리팀 (Side A) 탄약 소모량: {}\n", _ammo_a));
+            content.push_str(&format!("- 상대팀 (Side B) 탄약 소모량: {}\n", _ammo_b));
 
             let _ = fs::write(&phase_file, content);
+            */
 
             // 캔버스 생성 로직 (지원-보급 플로우 및 전황 지도 통합)
             if !support_requests_phase.is_empty() || !support_assignments_phase.is_empty() || !support_supplies_phase.is_empty() || !canvas_events_phase.is_empty() {
@@ -530,16 +609,41 @@ impl BattleLogger {
                 let mut node_counter = 0;
                 let mut edge_counter = 0;
                 
+                let mut unique_squads: Vec<usize> = _movements.keys().chain(_engagements.keys()).cloned().collect::<HashSet<_>>().into_iter().collect();
+                unique_squads.sort();
+
+                let mut a_squads_count = 0;
+                let mut b_squads_count = 0;
+                let mut a_soldiers_count = 0;
+                let mut b_soldiers_count = 0;
+                for squad_id in &unique_squads {
+                    let size = *_squad_sizes.get(squad_id).unwrap_or(&0);
+                    match squad_sides.get(squad_id).unwrap_or(&Side::All) {
+                        Side::A => {
+                            a_squads_count += 1;
+                            a_soldiers_count += size;
+                        },
+                        Side::B => {
+                            b_squads_count += 1;
+                            b_soldiers_count += size;
+                        },
+                        _ => {}
+                    }
+                }
+
+                let phase_deaths_a = _deaths_a.len();
+                let phase_deaths_b = _deaths_b.len();
+
                 // Phase 노드 생성
                 let phase_node_id = format!("phase_{}", current_phase_owned);
                 let phase_node = serde_json::json!({
                     "id": phase_node_id,
                     "type": "text",
-                    "text": format!("# Phase {}: 지원-보급 플로우\n(프레임: {} ~ {})", current_phase_owned, start_time, end_frame),
+                    "text": format!("# Phase {}\n(프레임: {} ~ {})\n\n**🟦 Side A**\n- 참여 분대: {}개 ({}명)\n- 전사자: {}명\n\n**🟥 Side B**\n- 참여 분대: {}개 ({}명)\n- 전사자: {}명", current_phase_owned, start_time, end_frame, a_squads_count, a_soldiers_count, phase_deaths_a, b_squads_count, b_soldiers_count, phase_deaths_b),
                     "x": -400.0,
                     "y": -200.0,
-                    "width": 300.0,
-                    "height": 120.0,
+                    "width": 350.0,
+                    "height": 200.0,
                     "color": "3498db"
                 });
                 canvas_nodes.push(phase_node);
@@ -591,6 +695,52 @@ impl BattleLogger {
                 });
                 canvas_edges.push(edge_phase_team_b);
                 edge_counter += 1;
+
+                // [추가] Team 하위 분대(Squad) 노드 생성
+                let mut a_y_offset = 50.0;
+                let mut b_y_offset = 50.0;
+                
+                for squad_id in unique_squads {
+                    let side = squad_sides.get(&squad_id).unwrap_or(&Side::All);
+                    let is_a = *side == Side::A;
+                    
+                    let squad_node_id = format!("master_squad_{}", squad_id);
+                    let squad_x = if is_a { -200.0 } else { 200.0 };
+                    let squad_y = if is_a { 
+                        let y = a_y_offset; 
+                        a_y_offset += 60.0; 
+                        y 
+                    } else { 
+                        let y = b_y_offset; 
+                        b_y_offset += 60.0; 
+                        y 
+                    };
+                    let color = if is_a { "4b8bdf" } else { "df4b4b" };
+                    let parent_node = if is_a { "team_a" } else { "team_b" };
+                    
+                    let size = *_squad_sizes.get(&squad_id).unwrap_or(&0);
+                    let squad_node = serde_json::json!({
+                        "id": squad_node_id.clone(),
+                        "type": "text",
+                        "text": format!("[[{}]] ({}명)", format_squad(squad_id, *side), size),
+                        "x": squad_x,
+                        "y": squad_y,
+                        "width": 120.0,
+                        "height": 40.0,
+                        "color": color
+                    });
+                    canvas_nodes.push(squad_node);
+                    node_counter += 1;
+                    
+                    let edge_team_squad = serde_json::json!({
+                        "id": format!("edge_{}", edge_counter),
+                        "fromNode": parent_node,
+                        "toNode": squad_node_id,
+                        "label": "분대 편성"
+                    });
+                    canvas_edges.push(edge_team_squad);
+                    edge_counter += 1;
+                }
                 
                 // 지원 요청 처리
                 let mut request_nodes: Vec<(usize, String)> = Vec::new();
@@ -613,7 +763,7 @@ impl BattleLogger {
                     let squad_node = serde_json::json!({
                         "id": squad_node_id,
                         "type": "text",
-                        "text": format!("분대 {}\n({}진영)", req.requester_squad, squad_side),
+                        "text": format!("[[{}]]\n({}진영)", format_squad(req.requester_squad, *squad_side), squad_side),
                         "x": team_x - 150.0,
                         "y": 50.0 + y_offset,
                         "width": 120.0,
@@ -701,7 +851,7 @@ impl BattleLogger {
                     let supporter_node = serde_json::json!({
                         "id": supporter_node_id,
                         "type": "text",
-                        "text": format!("🔄 분대 {} (지원군)\n상태: {}", assign.supporter_squad, assign.status),
+                        "text": format!("🔄 [[{}]] (지원군)\n상태: {}", format_squad(assign.supporter_squad, *supporter_side), assign.status),
                         "x": supporter_team_x - 150.0,
                         "y": 500.0 + y_offset2,
                         "width": 150.0,
@@ -720,8 +870,8 @@ impl BattleLogger {
                         "id": assignment_node_id,
                         "type": "text",
                         "text": format!(
-                            "📋 지원 할당\n{} → {}\n프레임: {}",
-                            assign.supporter_squad, assign.requester_squad, assign.frame
+                            "📋 지원 할당\n[[{}]] → [[{}]]\n프레임: {}",
+                            format_squad(assign.supporter_squad, *supporter_side), format_squad(assign.requester_squad, *requester_side), assign.frame
                         ),
                         "x": supporter_team_x + 30.0,
                         "y": 500.0 + y_offset2,
@@ -831,7 +981,7 @@ impl BattleLogger {
                     let supply_node = serde_json::json!({
                         "id": supply_node_id,
                         "type": "text",
-                        "text": format!("📦 병력 보급\n탄약: {}발", supply.ammo_amount),
+                        "text": format!("📦 [[{}]] 병력 보급\n탄약: {}발", format_squad(supply.squad, *squad_side), supply.ammo_amount),
                         "x": team_x + 240.0,
                         "y": 900.0 + y_offset3,
                         "width": 160.0,
@@ -908,38 +1058,71 @@ impl BattleLogger {
                     y_offset3 += 120.0;
                 }
                 
-                // 전황 지도 (섹터별 타임라인) 노드 및 엣지 추가 로직
+                // 전황 지도 (섹터별 타임라인) 노드 및 엣지 추가 로직 (개별 섹터 캔버스 분리 및 마스터 연결)
                 if !canvas_events_phase.is_empty() {
                     let mut sector_events: HashMap<String, Vec<CanvasEventLog>> = HashMap::new();
                     for ev in &canvas_events_phase {
                         sector_events.entry(ev.sector.clone()).or_insert_with(Vec::new).push(ev.clone());
                     }
 
-                    let mut squad_last_node: HashMap<usize, String> = HashMap::new();
+                    // 마스터 캔버스에 섹터 파일들을 배치할 시작 좌표 (지원-보급 플로우 아래쪽)
+                    let mut master_sector_x = -400.0;
+                    let mut master_sector_y = 1200.0;
 
-                    for (sector, events) in &mut sector_events {
+                    // 이중 차용(E0502) 에러 방지를 위해, 이벤트를 정렬하는 가변 참조 루프를 먼저 분리합니다.
+                    for events in sector_events.values_mut() {
                         events.sort_by(|a, b| a.frame.cmp(&b.frame));
+                    }
 
-                        let mut sector_x = 0.0;
-                        let mut sector_y = 0.0;
+                    for (sector, events) in &sector_events {
+                        let mut sector_nodes = Vec::new();
+                        let mut sector_edges = Vec::new();
+                        let mut sector_edge_counter = 0;
+                        let mut squad_last_node: HashMap<usize, String> = HashMap::new();
 
-                        let mut chars = sector.chars();
-                        if let Some(letter) = chars.next() {
-                            let number_str: String = chars.collect();
-                            if let Ok(number) = number_str.parse::<f32>() {
-                                let letter_idx = (letter as u32).saturating_sub('A' as u32) as f32;
-                                // 기존 지원 플로우 노드와 겹치지 않도록 전체 맵 좌표계를 우측으로 크게 이동 (+2000.0)
-                                sector_x = (letter_idx * 2500.0) + 2000.0;
-                                sector_y = (number * 2500.0) - 1000.0;
-                            }
-                        }
+                        // 개별 섹터 파일이므로 (0,0) 기준에서 렌더링 시작
+                        let sector_x = 0.0;
+                        let sector_y = 0.0;
 
                         // 섹터 그룹 노드
                         let sector_group_id = format!("group_{}", sector);
+                        let mut sector_deaths_a = 0;
+                        let mut sector_deaths_b = 0;
+                        let mut engaging_squads = HashSet::new();
+
+                        for ev in events.iter() {
+                            if ev.event_type == "Death" {
+                                if ev.side == Side::A { sector_deaths_a += 1; }
+                                else if ev.side == Side::B { sector_deaths_b += 1; }
+                            }
+                            if ev.event_type == "Engagement" {
+                                engaging_squads.insert(ev.squad_id);
+                                if let Some(target) = ev.target_squad {
+                                    engaging_squads.insert(target);
+                                }
+                            }
+                        }
+
+                        let mut engaging_a_count = 0;
+                        let mut engaging_a_soldiers = 0;
+                        let mut engaging_b_count = 0;
+                        let mut engaging_b_soldiers = 0;
+
+                        for sq in &engaging_squads {
+                            let size = *_squad_sizes.get(sq).unwrap_or(&0);
+                            if squad_sides.get(sq) == Some(&Side::A) {
+                                engaging_a_count += 1;
+                                engaging_a_soldiers += size;
+                            } else if squad_sides.get(sq) == Some(&Side::B) {
+                                engaging_b_count += 1;
+                                engaging_b_soldiers += size;
+                            }
+                        }
+
                         let group_node = serde_json::json!({
                             "id": sector_group_id,
                             "type": "group",
-                            "label": format!("Sector {}", sector),
+                            "label": format!("Sector {} (A전사: {}명, B전사: {}명) | 교전 분대 A: {}({}명), B: {}({}명)", sector, sector_deaths_a, sector_deaths_b, engaging_a_count, engaging_a_soldiers, engaging_b_count, engaging_b_soldiers),
                             "x": sector_x - 100.0,
                             "y": sector_y - 100.0,
                             "width": 1200.0,
@@ -947,13 +1130,12 @@ impl BattleLogger {
                             "color": "888888",
                             "backgroundStyle": "cover"
                         });
-                        canvas_nodes.push(group_node);
-                        node_counter += 1;
+                        sector_nodes.push(group_node);
 
                         let mut a_y_offset = 0.0;
                         let mut b_y_offset = 0.0;
 
-                        for ev in events {
+                        for ev in events.iter() {
                             let is_a = ev.side == Side::A;
                             let node_x = if is_a { sector_x + 50.0 } else { sector_x + 650.0 };
                             let node_y = if is_a { sector_y + a_y_offset } else { sector_y + b_y_offset };
@@ -966,7 +1148,8 @@ impl BattleLogger {
                                 _ => if is_a { "4b8bdf" } else { "df4b4b" },
                             };
 
-                            let text = format!("**[Frame {}] 분대 {}**\n{}", ev.frame, ev.squad_id, ev.desc);
+                            let ev_squad_size = *_squad_sizes.get(&ev.squad_id).unwrap_or(&0);
+                            let text = format!("**[Frame {}] [[{}]]** ({}명)\n{}", ev.frame, format_squad(ev.squad_id, ev.side), ev_squad_size, ev.desc);
 
                             let node = serde_json::json!({
                                 "id": node_id.clone(),
@@ -978,20 +1161,19 @@ impl BattleLogger {
                                 "height": 100.0,
                                 "color": color
                             });
-                            canvas_nodes.push(node);
-                            node_counter += 1;
+                            sector_nodes.push(node);
 
                             // 같은 분대의 타임라인 연결
                             if let Some(last_node_id) = squad_last_node.get(&ev.squad_id) {
                                 let edge = serde_json::json!({
-                                    "id": format!("edge_{}", edge_counter),
+                                    "id": format!("edge_sector_{}", sector_edge_counter),
                                     "fromNode": last_node_id,
                                     "toNode": node_id,
                                     "type": "arrow",
                                     "color": if is_a { "4b8bdf" } else { "df4b4b" }
                                 });
-                                canvas_edges.push(edge);
-                                edge_counter += 1;
+                                sector_edges.push(edge);
+                                sector_edge_counter += 1;
                             }
                             squad_last_node.insert(ev.squad_id, node_id.clone());
 
@@ -1001,27 +1183,141 @@ impl BattleLogger {
                                 b_y_offset += 150.0;
                             }
                         }
-                    }
 
-                    // 교전 엣지 연결 (A가 B를 공격)
-                    for ev in &canvas_events_phase {
-                        if ev.event_type == "Engagement" {
-                            if let Some(target_squad) = ev.target_squad {
-                                let from_node_id = format!("ev_{}_{}_{}", ev.squad_id, ev.frame, ev.event_type);
-                                
-                                if let Some(to_node_id) = squad_last_node.get(&target_squad) {
-                                    let edge = serde_json::json!({
-                                        "id": format!("edge_eng_{}", edge_counter),
-                                        "fromNode": from_node_id,
-                                        "toNode": to_node_id,
+                        // 교전 엣지 연결 (같은 섹터 내부에서 교전이 발생했을 경우에만 연결됨)
+                        for ev in events.iter() {
+                            if ev.event_type == "Engagement" {
+                                if let Some(target_squad) = ev.target_squad {
+                                    let from_node_id = format!("ev_{}_{}_{}", ev.squad_id, ev.frame, ev.event_type);
+                                    
+                                    if let Some(to_node_id) = squad_last_node.get(&target_squad) {
+                                        let edge = serde_json::json!({
+                                            "id": format!("edge_eng_{}", sector_edge_counter),
+                                            "fromNode": from_node_id,
+                                            "toNode": to_node_id,
+                                            "type": "arrow",
+                                            "color": "e74c3c",
+                                            "label": "교전"
+                                        });
+                                        sector_edges.push(edge);
+                                        sector_edge_counter += 1;
+                                    }
+                                }
+                            }
+                        }
+
+                        // 개별 섹터 캔버스 파일 생성 및 저장
+                        let sector_canvas_file_name = format!("Phase_{}_{}.canvas", current_phase_owned, sector);
+                        let sector_canvas_file = base_dir.join("phases").join(&sector_canvas_file_name);
+                        
+                        let sector_canvas_json = serde_json::json!({
+                            "nodes": sector_nodes,
+                            "edges": sector_edges
+                        });
+                        
+                        if let Ok(canvas_string) = serde_json::to_string_pretty(&sector_canvas_json) {
+                            let _ = fs::write(&sector_canvas_file, canvas_string);
+                        }
+
+                        let timestamp_dir = base_dir.file_name().unwrap_or_default().to_string_lossy();
+
+                        // 마스터 캔버스에 개별 섹터 캔버스를 포함하는 File 임베딩 노드 삽입
+                        let master_sector_node_id = format!("master_sector_{}", sector);
+                        let master_sector_node = serde_json::json!({
+                            "id": master_sector_node_id.clone(),
+                            "type": "file",
+                            "file": format!("{}/phases/{}", timestamp_dir, sector_canvas_file_name),
+                            "x": master_sector_x,
+                            "y": master_sector_y,
+                            "width": 400.0,
+                            "height": 400.0,
+                            "color": "888888"
+                        });
+                        canvas_nodes.push(master_sector_node);
+                        node_counter += 1;
+
+                        // [추가] 마스터 캔버스 내에서 Side A/B 소속, 교전, 지원 링크 생성
+                        let mut squads_in_sector = HashSet::new();
+                        let mut cross_sector_links = HashSet::new();
+
+                        for ev in events.iter() {
+                            squads_in_sector.insert(ev.squad_id);
+
+                            // 섹터 간 교전 링크 (타겟이 다른 섹터일 경우)
+                            if ev.event_type == "Engagement" {
+                                if let Some(target) = ev.target_squad {
+                                    for (other_sec, other_events) in &sector_events {
+                                        if other_sec != sector && other_events.iter().any(|e| e.squad_id == target) {
+                                            if cross_sector_links.insert(other_sec.clone()) {
+                                                let target_sector_node_id = format!("master_sector_{}", other_sec);
+                                                let edge = serde_json::json!({
+                                                    "id": format!("edge_{}", edge_counter),
+                                                    "fromNode": master_sector_node_id.clone(),
+                                                    "toNode": target_sector_node_id,
+                                                    "label": "원거리 교전",
+                                                    "type": "arrow",
+                                                    "color": "e74c3c"
+                                                });
+                                                canvas_edges.push(edge);
+                                                edge_counter += 1;
+                                            }
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        // 분대별 섹터 진입 링크 생성
+                        for squad_id in &squads_in_sector {
+                            let side = squad_sides.get(squad_id).unwrap_or(&Side::All);
+                            let color = if *side == Side::A { "4b8bdf" } else { "df4b4b" };
+                            let squad_node_id = format!("master_squad_{}", squad_id);
+                            
+                            canvas_edges.push(serde_json::json!({
+                                "id": format!("edge_{}", edge_counter),
+                                "fromNode": squad_node_id,
+                                "toNode": master_sector_node_id.clone(),
+                                "label": "섹터 진입",
+                                "color": color
+                            }));
+                            edge_counter += 1;
+                        }
+
+                        // 지원 요청/할당 노드와 섹터 매핑
+                        for squad in squads_in_sector {
+                            for (req_sq, req_node_id) in &request_nodes {
+                                if *req_sq == squad {
+                                    canvas_edges.push(serde_json::json!({
+                                        "id": format!("edge_{}", edge_counter),
+                                        "fromNode": req_node_id,
+                                        "toNode": master_sector_node_id.clone(),
+                                        "label": "요청 발생지",
                                         "type": "arrow",
-                                        "color": "e74c3c",
-                                        "label": "교전"
-                                    });
-                                    canvas_edges.push(edge);
+                                        "color": "e74c3c"
+                                    }));
                                     edge_counter += 1;
                                 }
                             }
+                            for (assign_sq, assign_node_id) in &assignment_nodes {
+                                if *assign_sq == squad {
+                                    canvas_edges.push(serde_json::json!({
+                                        "id": format!("edge_{}", edge_counter),
+                                        "fromNode": assign_node_id,
+                                        "toNode": master_sector_node_id.clone(),
+                                        "label": "파견 목적지",
+                                        "type": "arrow",
+                                        "color": "2ecc71"
+                                    }));
+                                    edge_counter += 1;
+                                }
+                            }
+                        }
+
+                        master_sector_x += 450.0;
+                        if master_sector_x > 1000.0 {
+                            master_sector_x = -400.0;
+                            master_sector_y += 450.0;
                         }
                     }
                 }
@@ -1034,13 +1330,6 @@ impl BattleLogger {
                 
                 if let Ok(canvas_string) = serde_json::to_string_pretty(&canvas_json) {
                     let _ = fs::write(&canvas_file, canvas_string);
-                }
-            }
-
-            if let Ok(mut file) = OpenOptions::new().append(true).create(true).open(&index_path) {
-                let _ = writeln!(file, "- [[phases/Phase_{}|Phase {} 기록 보기]] (Trigger: {})", current_phase_owned, current_phase_owned, trigger_string);
-                if !support_requests_phase.is_empty() || !support_assignments_phase.is_empty() || !canvas_events_phase.is_empty() {
-                    let _ = writeln!(file, "  - [[phases/Phase_{}.canvas|Phase {} 통합 전황 지도 및 지원 플로우 (캔버스)]]", current_phase_owned, current_phase_owned);
                 }
             }
         });
@@ -1113,8 +1402,35 @@ impl BattleLogger {
 
         fs::write(file_path, content).unwrap_or_else(|e| eprintln!("Failed to write total log: {}", e));
 
-        self.append_to_index("\n## 종합 결과");
-        self.append_to_index(&format!("- [[total/total|전체 종합 기록 보기]] (Reason: {})", reason));
+        // index.canvas에 total.md 연결
+        let timestamp_dir = self.base_dir.file_name().unwrap_or_default().to_string_lossy();
+        let total_node_id = "index_total".to_string();
+        let y_pos = (self.current_phase as f32) * 500.0;
+        
+        let total_node = serde_json::json!({
+            "id": total_node_id.clone(),
+            "type": "file",
+            "file": format!("{}/total/total.md", timestamp_dir),
+            "x": 0.0,
+            "y": y_pos,
+            "width": 600.0,
+            "height": 400.0,
+            "color": "e74c3c"
+        });
+        
+        self.index_nodes.push(total_node);
+        
+        let prev_phase_node_id = format!("index_phase_{}", self.current_phase);
+        let edge = serde_json::json!({
+            "id": "index_edge_total",
+            "fromNode": prev_phase_node_id,
+            "toNode": total_node_id,
+            "label": format!("End (Reason: {})", reason),
+            "type": "arrow"
+        });
+        self.index_edges.push(edge);
+        
+        self.write_index_canvas();
     }
 
     pub fn start_new_order(&mut self, command: &str, squad_id: usize, side: Side, frame: u64) -> usize {

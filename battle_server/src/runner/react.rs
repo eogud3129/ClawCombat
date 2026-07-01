@@ -151,7 +151,12 @@ impl Runner {
                                     }
                                 };
 
+                                let alive_count = self.battle_state.squad(soldier_posture.squad_uuid()).members().iter()
+                                    .filter(|&&m_idx| self.battle_state.soldier(m_idx).alive())
+                                    .count();
+
                                 if let Some(logger) = &mut self.logger {
+                                    logger.update_squad_size(soldier_posture.squad_uuid().0, alive_count);
                                     logger.log_movement(current_frame, side, *idx, old_sector, new_sector, &terrain_str, is_indoor, dist_m, posture_str);
                                 }
                             }
@@ -207,7 +212,13 @@ impl Runner {
                                 let side = *soldier_posture.side();
                                 let target_side = *target_leader.side();
 
+                                let my_alive_count = self.battle_state.squad(soldier_posture.squad_uuid()).members().iter()
+                                    .filter(|&&m_idx| self.battle_state.soldier(m_idx).alive())
+                                    .count();
+
                                 if let Some(logger) = &mut self.logger {
+                                    logger.update_squad_size(soldier_posture.squad_uuid().0, my_alive_count);
+                                    logger.update_squad_size(target_squad_uuid.0, alive_count);
                                     logger.log_engagement(current_frame, side, *idx, target_side, target_squad_uuid.0, target_grid, &target_sector, alive_count, &terrain_str, is_indoor, posture_str, threat_score);
                                 }
                             }
@@ -295,7 +306,14 @@ impl Runner {
 
                             let side = *dead_soldier.side();
                             let dead_sector = get_sector(dead_pos, map);
+
+                            let dead_squad_uuid = dead_soldier.squad_uuid();
+                            let dead_alive_count = self.battle_state.squad(dead_squad_uuid).members().iter()
+                                .filter(|&&m_idx| self.battle_state.soldier(m_idx).alive())
+                                .count();
+
                             if let Some(logger) = &mut self.logger {
+                                logger.update_squad_size(dead_squad_uuid.0, dead_alive_count);
                                 logger.log_death(current_frame, side, *idx, dead_grid, &dead_sector, &dead_terrain_str, dead_is_indoor, &cause_detail);
                             }
                         }
