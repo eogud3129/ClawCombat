@@ -35,6 +35,8 @@ pub struct Soldier {
     last_grenade_frame_i: u64,
     #[serde(default)]
     last_hide_frame_i: u64,
+    #[serde(default)]
+    player_controlled: bool,
 }
 
 impl Soldier {
@@ -69,7 +71,15 @@ impl Soldier {
             grenades,
             last_grenade_frame_i: 0,
             last_hide_frame_i: 0,
+            player_controlled: false,
         }
+    }
+
+    pub fn player_controlled(&self) -> bool {
+        self.player_controlled
+    }
+    pub fn set_player_controlled(&mut self, value: bool) {
+        self.player_controlled = value;
     }
 
     pub fn from_soldier(soldier: &Soldier) -> Self {

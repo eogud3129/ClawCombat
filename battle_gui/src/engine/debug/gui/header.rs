@@ -78,6 +78,11 @@ impl Engine {
                     self.config.target_fps = (battle_core::config::TARGET_FPS as f32 * speed_f32) as u32;
                 }
             }
+            if ui.button("10X").clicked() {
+                let speed_f32 = 10.0;
+                messages.push(EngineMessage::ChangeServerConfig(ChangeConfigMessage::GameSpeed(speed_f32)));
+                self.config.target_fps = (battle_core::config::TARGET_FPS as f32 * speed_f32) as u32;
+            }
 
             ui.separator();
 
@@ -88,6 +93,7 @@ impl Engine {
             }
         });
 
+        
         ui.separator();
 
         ui.horizontal(|ui| {

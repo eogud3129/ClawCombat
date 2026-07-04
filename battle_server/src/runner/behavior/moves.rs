@@ -51,25 +51,26 @@ impl Runner {
             }
         }
 
-        // 2. 적군 시야 및 사격 사로(위협 구역) 패널티 부여 (반경 약 30m)
-        for enemy in self.battle_state.soldiers().iter().filter(|s| s.side() != leader.side() && s.alive()) {
-            let enemy_grid = map.grid_point_from_world_point(&enemy.world_point());
-            let threat_grids = battle_core::utils::grid_points_for_square(&enemy_grid, 30, 30);
-            for tg in threat_grids {
-                if let Some(tile) = map.terrain_tiles().get((tg.y * map.width() as i32 + tg.x) as usize) {
-                    let opacity = self.config.terrain_tile_opacity(&tile.type_);
-                    // [개선] 평야(엄폐물 없는 타일)에서 적 시야에 노출될 경우 이동 비용(Cost) 극단적 증가 (+500) -> 가장 가까운 숲으로 우회 유도
-                    if opacity < 0.1 {
-                        *tactical_costs.entry(tg).or_insert(0) += 500;
-                    } else {
-                        // 숲이나 장애물이 있는 곳은 상대적으로 안전하므로 패널티 축소 (+20)
-                        *tactical_costs.entry(tg).or_insert(0) += 20;
-                    }
-                } else {
-                    *tactical_costs.entry(tg).or_insert(0) += 100;
-                }
+// 2. 적군 시야 및 사격 사로(위협 구역) 패널티 부여 (반경 약 60m)
+// 개활지 타일에는 5000의 강력한 패널티를 부여하여 절대 통과하지 않도록 유도
+for enemy in self.battle_state.soldiers().iter().filter(|s| s.side() != leader.side() && s.alive()) {
+    let enemy_grid = map.grid_point_from_world_point(&enemy.world_point());
+    let threat_grids = battle_core::utils::grid_points_for_square(&enemy_grid, 60, 60);
+    for tg in threat_grids {
+        if let Some(tile) = map.terrain_tiles().get((tg.y * map.width() as i32 + tg.x) as usize) {
+            let opacity = self.config.terrain_tile_opacity(&tile.type_);
+            if opacity < 0.1 {
+                // 개활지: 매우 높은 패널티 (우회 유도)
+                *tactical_costs.entry(tg).or_insert(0) += 5000;
+            } else {
+                // 엄폐물이 있는 지형: 낮은 패널티
+                *tactical_costs.entry(tg).or_insert(0) += 20;
             }
+        } else {
+            *tactical_costs.entry(tg).or_insert(0) += 100;
         }
+    }
+}
 
         // 3. 아군이 엎드려 있는 후방(안전 구역) 보너스 부여
         for ally in self.battle_state.soldiers().iter().filter(|s| s.side() == leader.side() && s.alive() && s.uuid() != leader.uuid()) {

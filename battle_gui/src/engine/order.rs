@@ -122,19 +122,26 @@ impl Engine {
         }
     }
 
-    pub fn define_order(&self, squad_leader: &SoldierIndex, order: &Order) -> Vec<EngineMessage> {
-        let mut messages = vec![EngineMessage::BattleState(BattleStateMessage::Soldier(
-            *squad_leader,
+pub fn define_order(&self, squad_leader: &SoldierIndex, order: &Order) -> Vec<EngineMessage> {
+    let mut messages = vec![];
+    let squad = self.battle_state.squad(self.battle_state.soldier(*squad_leader).squad_uuid());
+    for member_idx in squad.members() {
+        messages.push(EngineMessage::BattleState(BattleStateMessage::Soldier(
+            *member_idx,
             SoldierMessage::SetOrder(order.clone()),
-        ))];
-
-        if self.battle_state.phase().is_placement() {
-            // When in placement, solve order immediately
-            messages.extend(self.define_placement_order(squad_leader, order))
-        }
-
-        messages
+        )));
+        messages.push(EngineMessage::BattleState(BattleStateMessage::Soldier(
+            *member_idx,
+            SoldierMessage::SetPlayerControlled(true),
+        )));
     }
+
+    if self.battle_state.phase().is_placement() {
+        messages.extend(self.define_placement_order(squad_leader, order));
+    }
+
+    messages
+}
 
     pub fn define_placement_order(
         &self,

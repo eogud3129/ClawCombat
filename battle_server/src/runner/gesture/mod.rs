@@ -39,14 +39,19 @@ pub enum GestureResult {
 }
 
 impl Runner {
-    pub fn soldier_gesture(&self, soldier: &Soldier) -> Vec<RunnerMessage> {
-        puffin::profile_scope!("soldier_gesture");
-        let mut messages = vec![];
+pub fn soldier_gesture(&self, soldier: &Soldier) -> Vec<RunnerMessage> {
+    puffin::profile_scope!("soldier_gesture");
+    let mut messages = vec![];
 
-        // [수류탄 투척 제스처 락] 투척 딜레이 중에는 사격, 재장전 등 다른 제스처로 덮어씌워지지 않도록 차단합니다.
-        if let Gesture::Throwing(_, _) = soldier.gesture() {
-            return messages;
-        }
+    // 플레이어가 직접 조종하는 유닛은 AI가 제스처를 변경하지 않음
+    if soldier.player_controlled() {
+        return messages;
+    }
+
+    // [수류탄 투척 제스처 락]
+    if let Gesture::Throwing(_, _) = soldier.gesture() {
+        return messages;
+    }
 
         let new_gesture = match soldier.behavior() {
             Behavior::Idle(_) => {

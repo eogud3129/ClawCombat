@@ -60,6 +60,7 @@ pub enum SoldierMessage {
     ConsumeGrenade,
     SetLastGrenadeFrameI(u64),
     ReplenishAmmunition,
+    SetPlayerControlled(bool),
 }
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]

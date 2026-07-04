@@ -23,16 +23,21 @@ mod moves;
 mod suppress;
 
 impl Runner {
-    pub fn soldier_behavior(&self, soldier: &Soldier) -> Vec<RunnerMessage> {
-        puffin::profile_scope!("soldier_behavior");
-        let mut messages = vec![];
-        let soldier = self.battle_state.soldier(soldier.uuid());
 
-        // [사망자 좀비 방지] 사망한 유닛은 더 이상 어떠한 행동(Behavior)도 재계산하거나 명령을 덮어쓰지 않습니다.
-        if !soldier.alive() {
-            return messages;
-        }
+pub fn soldier_behavior(&self, soldier: &Soldier) -> Vec<RunnerMessage> {
+    puffin::profile_scope!("soldier_behavior");
+    let mut messages = vec![];
+    let soldier = self.battle_state.soldier(soldier.uuid());
 
+    // 플레이어가 직접 조종하는 유닛은 AI가 간섭하지 않음
+    if soldier.player_controlled() {
+        return messages;
+    }
+
+    // [사망자 좀비 방지]
+    if !soldier.alive() {
+        return messages;
+    }
         // [기획 반영: 최초 스폰 위치를 체크포인트로 영구 고정]
         // 매번 플래그 이동 시 갱신하는 것이 아니라, 최초에 배정된 안전한 스폰(출발) 위치를 최우선 체크포인트로 기록합니다.
         if !self.checkpoints.read().unwrap().contains_key(&soldier.squad_uuid()) {

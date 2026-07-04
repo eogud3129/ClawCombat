@@ -9729,16 +9729,21 @@ mod moves;
 mod suppress;
 
 impl Runner {
-    pub fn soldier_behavior(&self, soldier: &Soldier) -> Vec<RunnerMessage> {
-        puffin::profile_scope!("soldier_behavior");
-        let mut messages = vec![];
-        let soldier = self.battle_state.soldier(soldier.uuid());
 
-        // [사망자 좀비 방지] 사망한 유닛은 더 이상 어떠한 행동(Behavior)도 재계산하거나 명령을 덮어쓰지 않습니다.
-        if !soldier.alive() {
-            return messages;
-        }
+pub fn soldier_behavior(&self, soldier: &Soldier) -> Vec<RunnerMessage> {
+    puffin::profile_scope!("soldier_behavior");
+    let mut messages = vec![];
+    let soldier = self.battle_state.soldier(soldier.uuid());
 
+    // 플레이어가 직접 조종하는 유닛은 AI가 간섭하지 않음
+    if soldier.player_controlled() {
+        return messages;
+    }
+
+    // [사망자 좀비 방지]
+    if !soldier.alive() {
+        return messages;
+    }
         // [기획 반영: 최초 스폰 위치를 체크포인트로 영구 고정]
         // 매번 플래그 이동 시 갱신하는 것이 아니라, 최초에 배정된 안전한 스폰(출발) 위치를 최우선 체크포인트로 기록합니다.
         if !self.checkpoints.read().unwrap().contains_key(&soldier.squad_uuid()) {
@@ -15517,14 +15522,19 @@ pub enum GestureResult {
 }
 
 impl Runner {
-    pub fn soldier_gesture(&self, soldier: &Soldier) -> Vec<RunnerMessage> {
-        puffin::profile_scope!("soldier_gesture");
-        let mut messages = vec![];
+pub fn soldier_gesture(&self, soldier: &Soldier) -> Vec<RunnerMessage> {
+    puffin::profile_scope!("soldier_gesture");
+    let mut messages = vec![];
 
-        // [수류탄 투척 제스처 락] 투척 딜레이 중에는 사격, 재장전 등 다른 제스처로 덮어씌워지지 않도록 차단합니다.
-        if let Gesture::Throwing(_, _) = soldier.gesture() {
-            return messages;
-        }
+    // 플레이어가 직접 조종하는 유닛은 AI가 제스처를 변경하지 않음
+    if soldier.player_controlled() {
+        return messages;
+    }
+
+    // [수류탄 투척 제스처 락]
+    if let Gesture::Throwing(_, _) = soldier.gesture() {
+        return messages;
+    }
 
         let new_gesture = match soldier.behavior() {
             Behavior::Idle(_) => {
@@ -17903,7 +17913,7 @@ impl Runner {
         puffin::profile_scope!("inputs");
         loop {
             let inputs = match self.input.try_recv() {
-              Ç  Ok(message) => message,
+                Ok(message) => message,
                 Err(error) => match error {
                     TryRecvError::Empty => break,
                     TryRecvError::Disconnected => return Err(RunnerError::InputChannelClosed),
@@ -49859,6 +49869,8 @@ pub struct Soldier {
     last_grenade_frame_i: u64,
     #[serde(default)]
     last_hide_frame_i: u64,
+    #[serde(default)]
+    player_controlled: bool,
 }
 
 impl Soldier {
@@ -49893,7 +49905,15 @@ impl Soldier {
             grenades,
             last_grenade_frame_i: 0,
             last_hide_frame_i: 0,
+            player_controlled: false,
         }
+    }
+
+    pub fn player_controlled(&self) -> bool {
+        self.player_controlled
+    }
+    pub fn set_player_controlled(&mut self, value: bool) {
+        self.player_controlled = value;
     }
 
     pub fn from_soldier(soldier: &Soldier) -> Self {
@@ -52411,6 +52431,7 @@ pub enum SoldierMessage {
     ConsumeGrenade,
     SetLastGrenadeFrameI(u64),
     ReplenishAmmunition,
+    SetPlayerControlled(bool),
 }
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
@@ -52532,80 +52553,87 @@ use super::BattleState;
 impl BattleState {
     // TODO : this func must clone things, this is not optimal
     // TODO : return type is too much complex
-    pub fn order_markers(
-        &self,
-        side: &Side,
-    ) -> Vec<(Order, OrderMarker, SquadUuid, WorldPoint, OrderMarkerIndex)> {
-        let mut marker_data = vec![];
+pub fn order_markers(
+    &self,
+    side: &Side,
+) -> Vec<(Order, OrderMarker, SquadUuid, WorldPoint, OrderMarkerIndex)> {
+    let mut marker_data = vec![];
 
-        for (squad_id, order) in self.all_orders(side) {
-            let marker = order.marker();
-            let squad = self.squad(squad_id);
-            match &order {
-                Order::MoveTo(world_paths, _)
-                | Order::MoveFastTo(world_paths, _)
-                | Order::SneakTo(world_paths, _) => {
-                    // Return one couple by move path (because can have multiple move paths))
-                    marker_data.extend::<Vec<(
-                        Order,
-                        OrderMarker,
-                        SquadUuid,
-                        WorldPoint,
-                        OrderMarkerIndex,
-                    )>>(
-                        world_paths
-                            .paths
-                            .iter()
-                            .enumerate()
-                            .map(|(i, wp)| {
-                                (
-                                    order.clone(),
-                                    marker.clone().unwrap(),  // FIXME : unwrap to delete
-                                    squad_id,
-                                    wp.last_point().expect("Must have point here"),
-                                    OrderMarkerIndex(i),
-                                )
-                            })
-                            .collect(),
-                    );
-                }
-                Order::Defend(_) | Order::Hide(_) => {
-                    let squad_leader = self.soldier(squad.leader());
-                    marker_data.push((
-                        order.clone(),
-                        marker.clone().unwrap(), // FIXME unwrap to remove
-                        squad_id,
-                        squad_leader.world_point(),
-                        OrderMarkerIndex(0),
-                    ));
-                }
-                Order::Idle => {}
-                Order::EngageSquad(squad_index) => {
-                    let squad = self.squad(*squad_index);
-                    let leader = self.soldier(squad.leader());
-                    marker_data.push((
-                        order.clone(),
-                        marker.clone().unwrap(), // FIXME unwrap to remove
-                        squad_id,
-                        leader.world_point(),
-                        OrderMarkerIndex(0),
-                    ));
-                }
-                Order::SuppressFire(point) => {
-                    marker_data.push((
-                        order.clone(),
-                        marker.clone().unwrap(), // FIXME unwrap to remove
-                        squad_id,
-                        *point,
-                        OrderMarkerIndex(0),
-                    ));
-                }
-                Order::OffMapTransit(_) => {}
-            }
+    for (squad_id, order) in self.all_orders(side) {
+        // 분대가 존재하지 않으면 건너뜀
+        if !self.squads().contains_key(&squad_id) {
+            continue;
         }
-
-        marker_data
+        let marker = order.marker();
+        let squad = self.squad(squad_id);
+        match &order {
+            Order::MoveTo(world_paths, _)
+            | Order::MoveFastTo(world_paths, _)
+            | Order::SneakTo(world_paths, _) => {
+                marker_data.extend::<Vec<(
+                    Order,
+                    OrderMarker,
+                    SquadUuid,
+                    WorldPoint,
+                    OrderMarkerIndex,
+                )>>(
+                    world_paths
+                        .paths
+                        .iter()
+                        .enumerate()
+                        .map(|(i, wp)| {
+                            (
+                                order.clone(),
+                                marker.clone().unwrap(),
+                                squad_id,
+                                wp.last_point().expect("Must have point here"),
+                                OrderMarkerIndex(i),
+                            )
+                        })
+                        .collect(),
+                );
+            }
+            Order::Defend(_) | Order::Hide(_) => {
+                let squad_leader = self.soldier(squad.leader());
+                marker_data.push((
+                    order.clone(),
+                    marker.clone().unwrap(),
+                    squad_id,
+                    squad_leader.world_point(),
+                    OrderMarkerIndex(0),
+                ));
+            }
+            Order::Idle => {}
+            Order::EngageSquad(squad_index) => {
+                // 타겟 분대도 존재하는지 확인
+                if !self.squads().contains_key(squad_index) {
+                    continue;
+                }
+                let squad = self.squad(*squad_index);
+                let leader = self.soldier(squad.leader());
+                marker_data.push((
+                    order.clone(),
+                    marker.clone().unwrap(),
+                    squad_id,
+                    leader.world_point(),
+                    OrderMarkerIndex(0),
+                ));
+            }
+            Order::SuppressFire(point) => {
+                marker_data.push((
+                    order.clone(),
+                    marker.clone().unwrap(),
+                    squad_id,
+                    *point,
+                    OrderMarkerIndex(0),
+                ));
+            }
+            Order::OffMapTransit(_) => {}
+        }
     }
+
+    marker_data
+}
 }
 === ./battle_core/src/state/battle/phase.rs ===
 use std::fmt::Display;
@@ -53271,6 +53299,9 @@ impl BattleState {
             }
             SoldierMessage::ReplenishAmmunition => {
                 soldier.replenish_ammunition();
+            }
+            SoldierMessage::SetPlayerControlled(value) => {
+                soldier.set_player_controlled(*value);
             }
         }
 
@@ -65307,19 +65338,26 @@ impl Engine {
         }
     }
 
-    pub fn define_order(&self, squad_leader: &SoldierIndex, order: &Order) -> Vec<EngineMessage> {
-        let mut messages = vec![EngineMessage::BattleState(BattleStateMessage::Soldier(
-            *squad_leader,
+pub fn define_order(&self, squad_leader: &SoldierIndex, order: &Order) -> Vec<EngineMessage> {
+    let mut messages = vec![];
+    let squad = self.battle_state.squad(self.battle_state.soldier(*squad_leader).squad_uuid());
+    for member_idx in squad.members() {
+        messages.push(EngineMessage::BattleState(BattleStateMessage::Soldier(
+            *member_idx,
             SoldierMessage::SetOrder(order.clone()),
-        ))];
-
-        if self.battle_state.phase().is_placement() {
-            // When in placement, solve order immediately
-            messages.extend(self.define_placement_order(squad_leader, order))
-        }
-
-        messages
+        )));
+        messages.push(EngineMessage::BattleState(BattleStateMessage::Soldier(
+            *member_idx,
+            SoldierMessage::SetPlayerControlled(true),
+        )));
     }
+
+    if self.battle_state.phase().is_placement() {
+        messages.extend(self.define_placement_order(squad_leader, order));
+    }
+
+    messages
+}
 
     pub fn define_placement_order(
         &self,
@@ -66602,114 +66640,24 @@ impl Engine {
     }
 
     pub fn generate_pending_order_sprites(
-        &self,
-        pending_order: &PendingOrder,
-        mesh_builder: &mut MeshBuilder,
-    ) -> GameResult<Vec<DrawParam>> {
-        let mut draw_params = vec![];
+    &self,
+    pending_order: &PendingOrder,
+    mesh_builder: &mut MeshBuilder,
+) -> GameResult<Vec<DrawParam>> {
+    let mut draw_params = vec![];
 
-        let squad = self.battle_state.squad(*pending_order.squad_index());
-        let squad_leader = self.battle_state.soldier(squad.leader());
-
-        match pending_order {
-            PendingOrder::MoveTo(_, _, cached_points)
-            | PendingOrder::MoveFastTo(_, _, cached_points)
-            | PendingOrder::SneakTo(_, _, cached_points) => {
-                let pending_order_marker = self.pending_order_marker(pending_order);
-                for cached_point in cached_points {
-                    let point = self.gui_state.window_point_from_world_point(*cached_point);
-                    draw_params.push(
-                        self.graphics
-                            .order_marker_draw_params(&pending_order_marker, point, Angle(0.))
-                            .scale(self.gui_state.zoom.to_vec2()),
-                    )
-                }
-                let cursor_point = self.gui_state.current_cursor_window_point();
-                draw_params.push(
-                    self.graphics
-                        .order_marker_draw_params(&pending_order_marker, *cursor_point, Angle(0.))
-                        .scale(self.gui_state.zoom.to_vec2()),
-                );
-            }
-            PendingOrder::Defend(_) | PendingOrder::Hide(_) => {
-                let pending_order_marker = self.pending_order_marker(pending_order);
-                let to_point = self.gui_state.current_cursor_world_point().to_vec2();
-                let from_point = squad_leader.world_point().to_vec2();
-                let point = self
-                    .gui_state
-                    .window_point_from_world_point(squad_leader.world_point());
-                draw_params.push(
-                    self.graphics
-                        .order_marker_draw_params(
-                            &pending_order_marker,
-                            point,
-                            Angle::from_points(&to_point, &from_point),
-                        )
-                        // Defend/Hide sprite are scaled
-                        .scale(self.gui_state.zoom.to_vec2()),
-                );
-
-                if pending_order.is_hide() {
-                    let radius = ((self.server_config.hide_maximum_rayon.millimeters() as f32
-                        / DISTANCE_TO_METERS_COEFFICIENT)
-                        / 1000.)
-                        * self.gui_state.zoom.factor();
-                    let point = self
-                        .gui_state
-                        .window_point_from_world_point(squad_leader.world_point());
-                    mesh_builder.circle(
-                        DrawMode::Stroke(StrokeOptions::default()),
-                        point.to_vec2(),
-                        radius,
-                        1.0,
-                        Color::YELLOW,
-                    )?;
-                }
-            }
-            PendingOrder::EngageOrFire(_) => {
-                let pending_order_marker = self.pending_order_marker(pending_order);
-                let from_point = self
-                    .gui_state
-                    .window_point_from_world_point(squad_leader.world_point());
-                let to_point = self.gui_state.current_cursor_window_point();
-
-                let visibility = Visibility::between_points(
-                    &self.server_config,
-                    &squad_leader.world_point(),
-                    &self.gui_state.current_cursor_world_point(),
-                    self.battle_state.map(),
-                );
-
-                if let Some(break_point) = visibility.break_point {
-                    let to_break_point = self.gui_state.window_point_from_world_point(break_point);
-                    mesh_builder.line(
-                        &[from_point.to_vec2(), to_break_point.to_vec2()],
-                        2.,
-                        Color::RED,
-                    )?;
-                    mesh_builder.line(
-                        &[to_break_point.to_vec2(), to_point.to_vec2()],
-                        2.,
-                        Color::BLACK,
-                    )?;
-                } else {
-                    mesh_builder.line(
-                        &[from_point.to_vec2(), to_point.to_vec2()],
-                        2.,
-                        Color::RED,
-                    )?;
-                }
-
-                draw_params.push(self.graphics.order_marker_draw_params(
-                    &pending_order_marker,
-                    *to_point,
-                    Angle(0.),
-                ))
-            }
-        }
-
-        Ok(draw_params)
+    let squad_uuid = *pending_order.squad_index();
+    if !self.battle_state.squads().contains_key(&squad_uuid) {
+        return Ok(vec![]);
     }
+    let squad = self.battle_state.squad(squad_uuid);
+    let squad_leader = self.battle_state.soldier(squad.leader());
+
+    match pending_order {
+        // ...
+    }
+    Ok(draw_params)
+}
 
     fn pending_order_marker(&self, pending_order: &PendingOrder) -> OrderMarker {
         match pending_order {
@@ -70961,6 +70909,11 @@ impl Engine {
                     self.config.target_fps = (battle_core::config::TARGET_FPS as f32 * speed_f32) as u32;
                 }
             }
+            if ui.button("10X").clicked() {
+                let speed_f32 = 10.0;
+                messages.push(EngineMessage::ChangeServerConfig(ChangeConfigMessage::GameSpeed(speed_f32)));
+                self.config.target_fps = (battle_core::config::TARGET_FPS as f32 * speed_f32) as u32;
+            }
 
             ui.separator();
 
@@ -70971,6 +70924,7 @@ impl Engine {
             }
         });
 
+        
         ui.separator();
 
         ui.horizontal(|ui| {

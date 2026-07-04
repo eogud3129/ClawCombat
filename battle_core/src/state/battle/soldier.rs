@@ -85,6 +85,9 @@ impl BattleState {
             SoldierMessage::ReplenishAmmunition => {
                 soldier.replenish_ammunition();
             }
+            SoldierMessage::SetPlayerControlled(value) => {
+                soldier.set_player_controlled(*value);
+            }
         }
 
         vec![]
