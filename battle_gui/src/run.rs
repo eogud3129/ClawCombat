@@ -200,6 +200,13 @@ pub fn run(
     }
 
     // GraphicsInitializationError 방지를 위해 그래픽스 백엔드를 Vulkan으로 설정합니다.
+   // macOS에서는 Vulkan 대신 OpenGL 또는 기본 백엔드를 사용합니다.
+    #[cfg(target_os = "macos")]
+    let mut context_builder =
+        ggez::ContextBuilder::new("Open Combat", "Bastien Sevajol")
+            .window_mode(windowed_mode());
+
+    #[cfg(not(target_os = "macos"))]
     let mut context_builder =
         ggez::ContextBuilder::new("Open Combat", "Bastien Sevajol")
             .window_mode(windowed_mode())
